@@ -77,22 +77,25 @@ test('liftProfile: bigger shells thump deeper and longer', () => {
   assert.equal(big.noiseCutoffStart, 380);
 });
 
-test('whistleProfile: small shells whistle higher, pitch rises, gap before boom', () => {
+test('whistleProfile: small shells whistle higher, pitch falls, short and fading', () => {
   const big = whistleProfile(1.2, 5.1, 1000), small = whistleProfile(0.6, 5.1, 1000);
   assert.ok(small.f0 > big.f0);
-  assert.ok(big.f1 > big.f0 && small.f1 > small.f0);
-  assert.ok(near(big.dur, 5.1 - big.endGap));
-  assert.ok(big.endGap > small.endGap);
+  assert.ok(big.f1 < big.f0 && small.f1 < small.f0);
+  assert.ok(near(big.dur, 5.1 * 0.4));
+  assert.ok(big.dur < 5.1 / 2);
   assert.ok(big.noiseMix > small.noiseMix);
   assert.ok(big.noiseMix <= 1 && small.noiseMix >= 0);
   assert.ok(big.gain > small.gain);
-  assert.equal(big.q, 14);
+  assert.equal(big.q, 12);
   assert.equal(big.breathGain, 2.5);
+  assert.equal(big.decayTo, 0.1);
   assert.ok(allPositiveFinite(big) && allPositiveFinite(small));
 });
 
-test('whistleProfile floors duration at 0.6s', () => {
+test('whistleProfile clamps duration to 0.6..2.2 s', () => {
   assert.equal(whistleProfile(1, 0.5, 1000).dur, 0.6);
+  assert.equal(whistleProfile(1, 10, 1000).dur, 2.2);
+  assert.ok(near(whistleProfile(1, 4, 1000).dur, 1.6));
 });
 
 test('whistleArbiter: start below cap', () => {

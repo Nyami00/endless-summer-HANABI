@@ -165,10 +165,11 @@
       const s=sizeOf(power),dist=distFactor(d);
       return {gain:.35*power*dist,noiseCutoffStart:380,noiseCutoffEnd:90,noiseDecay:.38,bassStart:mix(80,55,s),bassEnd:30,bassDecay:mix(.3,.5,s),bassGain:.66,reverbSend:1};
     }
+    // 上昇音「ヒュー」: 高めに始まり、上昇とともに音程を下げながら短く減衰する（開花のかなり前に消える。ビブラートなし）
     function whistleProfile(power,duration,d){
-      const s=sizeOf(power),dist=distFactor(d),f0=mix(2000,850,s),endGap=mix(.2,.35,s);
-      return {f0,f1:f0*Math.pow(2,mix(3,5,s)/12),endGap,dur:Math.max(.6,duration-endGap),attack:.12,release:.08,sustainEnd:.55,
-        noiseMix:mix(.35,.75,s),gain:mix(.06,.11,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,breathGain:2.5,reverbSend:.5};
+      const s=sizeOf(power),dist=distFactor(d),f0=mix(2600,1400,s);
+      return {f0,f1:f0*Math.pow(2,-mix(4,7,s)/12),dur:clamp(duration*.4,.6,2.2),attack:.05,release:.05,decayTo:.1,
+        noiseMix:mix(.5,.7,s),gain:mix(.07,.12,s)*dist,q:12,breathGain:2.5,reverbSend:.4};
     }
     // 同時に鳴らす笛の裁定。active は鳴っている笛 [{power}], incoming は {power, priority}
     // priority（タップ・文字花火）は必ず鳴らすが、2*max 本を超えては積まず最弱と差し替える（連打で無制限に重ならないための天井）
@@ -584,30 +585,29 @@
     lastSource.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
     return voice;
   }
-  // 上昇音「ヒュー」。正弦波(笛) + バンドパス白ノイズ(息) を noiseMix で混ぜ、f0 → f1 へ指数ランプ。
+  // 上昇音「ヒュー」。正弦波(笛) + バンドパス白ノイズ(息) を noiseMix で混ぜ、f0 → f1 へ下降する指数ランプ。短く減衰して開花前に消える。
   // 返す voice は {power, stop(fade), onended}。stop() は差し替え時のフェードアウト用。
   function buildWhistle(c,bus,t,p,buffers){
     const end=t+p.dur+p.release+.05,nodes=[];
     const env=c.createGain();
     env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain,t+p.attack);
-    env.gain.exponentialRampToValueAtTime(Math.max(.0005,p.gain*p.sustainEnd),t+p.dur);env.gain.linearRampToValueAtTime(0,t+p.dur+p.release);
+    env.gain.exponentialRampToValueAtTime(Math.max(.0005,p.gain*p.decayTo),t+p.dur);env.gain.linearRampToValueAtTime(0,t+p.dur+p.release);
     env.connect(bus.dry);
-    const osc=c.createOscillator(),tone=c.createGain(),lfo=c.createOscillator(),depth=c.createGain();
+    const osc=c.createOscillator(),tone=c.createGain();
     osc.type='sine';osc.frequency.setValueAtTime(p.f0,t);osc.frequency.exponentialRampToValueAtTime(p.f1,t+p.dur);tone.gain.value=1-p.noiseMix;
-    lfo.type='sine';lfo.frequency.value=p.vibratoHz;depth.gain.value=p.f0*p.vibratoDepth;
-    lfo.connect(depth);depth.connect(osc.frequency);osc.connect(tone);tone.connect(env);
+    osc.connect(tone);tone.connect(env);
     const src=c.createBufferSource(),bp=c.createBiquadFilter(),breath=c.createGain();
     src.buffer=buffers.white;src.loop=true;bp.type='bandpass';bp.Q.value=p.q;
     bp.frequency.setValueAtTime(p.f0,t);bp.frequency.exponentialRampToValueAtTime(p.f1,t+p.dur);
     breath.gain.value=p.noiseMix*p.breathGain; // 補正係数は whistleProfile.breathGain
     src.connect(bp);bp.connect(breath);breath.connect(env);
-    nodes.push(env,osc,tone,lfo,depth,src,bp,breath);
-    osc.start(t);lfo.start(t);src.start(t);osc.stop(end);lfo.stop(end);src.stop(end);
+    nodes.push(env,osc,tone,src,bp,breath);
+    osc.start(t);src.start(t);osc.stop(end);src.stop(end);
     const voice={power:0,onended:null,stop(fade=.15){
       // 生成と同じ tick で止められると now<t で予約が全消去され env.gain.value が既定値 1 を返すため、その場合は 0 から落とす
       const now=c.currentTime,from=now<t?0:env.gain.value;
       env.gain.cancelScheduledValues(now);env.gain.setValueAtTime(from,now);env.gain.linearRampToValueAtTime(0,now+fade);
-      const at=now+fade+.01;osc.stop(at);lfo.stop(at);src.stop(at);
+      const at=now+fade+.01;osc.stop(at);src.stop(at);
     }};
     osc.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
     return voice;
@@ -685,7 +685,7 @@
       const length=audibleSeconds(big);
       check('whistle length matches profile',Math.abs(length-pBig.dur)<.2,`${length.toFixed(2)}s vs ${pBig.dur.toFixed(2)}s`);
       const early=zeroCrossingRate(big,.35,.85),late=zeroCrossingRate(big,.05+pBig.dur-.8,.05+pBig.dur-.3);
-      check('whistle pitch rises',late>early,`${early.toFixed(0)} -> ${late.toFixed(0)} crossings/s`);
+      check('whistle pitch falls',early>late,`${early.toFixed(0)} -> ${late.toFixed(0)} crossings/s`);
       const smallEarly=zeroCrossingRate(small,.35,.85);
       check('small shell whistles higher',smallEarly>early,`${smallEarly.toFixed(0)} vs ${early.toFixed(0)}`);
       const boomBig=decayProfile(await audio.renderOffline('burst',1.2)),boomSmall=decayProfile(await audio.renderOffline('burst',.6));
