@@ -206,6 +206,7 @@
   })();
   // PURE_LOGIC_END
   const {sizeOf,distFactor,burstProfile,smallProfile,liftProfile,whistleProfile,whistleArbiter,sanitizeText,textLayout,normalizePoints,pickStep}=PURE;
+  const params=new URLSearchParams(location.search);
   let surface=$('fireworks'),W=innerWidth,H=innerHeight,simTime=0,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
   let raf=0,lastStamp=0,accumulator=0,density=2,quiet=false,soundOn=false,toastTimer;
   const camera={yaw:0,targetYaw:0,pitch:0,targetPitch:0,zoom:1,targetZoom:1,eye:[0,0,0],right:[1,0,0],up:[0,1,0],forward:[0,0,-1],lens:2.19,distance:900,horizon:.15};
@@ -361,8 +362,8 @@
   }
   function puff(x,y,z,r=40,life=18){if(smoke.length>=190)return;smoke.push({x,y,z,age:0,life,r,seed:rand(0,100)});}
   function flash(x,y,z,color,power=1){lights.push({x,y,z,color,age:0,life:3.4,power});if(lights.length>25)lights.shift();}
-  function queueSound(x,y,z,power=1,kind='burst'){
-    const d=Math.hypot(x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]);soundEvents.push({at:simTime+d/343,x,y,z,d,power,kind});
+  function queueSound(x,y,z,power=1,kind='burst',extra={}){
+    const d=Math.hypot(x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]);soundEvents.push({at:simTime+d/343,x,y,z,d,power,kind,...extra});
     if(soundEvents.length>100)soundEvents.shift();
   }
   function openShell(x,y,z,type='yae',power=1,palette=pick(PALETTES),mini=false){
@@ -398,11 +399,13 @@
       const n=Math.round(180*quality);for(let i=0;i<n;i++){const a=i/n*TAU,vx=16*Math.sin(a)**3/18*baseSpeed,vy=(13*Math.cos(a)-5*Math.cos(2*a)-2*Math.cos(3*a)-Math.cos(4*a))/18*baseSpeed;addStar(x,y,z,vx,vy,rand(-1,1),C.red,3.8,{tail:.05,goldStart:0,secondary:C.pink,change:.75});}
     }
   }
-  function launch(type='yae',x=0,y=400,z=0,power=1,palette=pick(PALETTES)){
+  function launch(type='yae',x=0,y=400,z=0,power=1,palette=pick(PALETTES),extra={}){
     if(shells.length>=16)return;
     const stations=[-300,-150,0,150,300],start=stations.reduce((a,b)=>Math.abs(b-x)<Math.abs(a-x)?b:a,0),duration=4.55+y*.0015,drag=.35,F=(1-Math.exp(-drag*duration))/drag;
-    shells.push({x:start,y:3,z,startX:start,startY:3,startZ:z,vx:(x-start)/F,vy:(y-3+9.81/drag*(duration-F))/F,vz:0,drag,duration,age:0,type,power,palette,tx:x,ty:y,tz:z,emit:0,hist:[]});
-    puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);queueSound(start,3,z,power,'lift');
+    shells.push({x:start,y:3,z,startX:start,startY:3,startZ:z,vx:(x-start)/F,vy:(y-3+9.81/drag*(duration-F))/F,vz:0,drag,duration,age:0,type,power,palette,tx:x,ty:y,tz:z,emit:0,hist:[],extra});
+    puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);
+    queueSound(start,3,z,power,'lift');
+    queueSound(start,3,z,power,'whistle',{duration,priority:!!extra.priority});
   }
   function updatePhysics(dt){
     for(let i=shells.length-1;i>=0;i--){const s=shells[i];s.age+=dt;const t=Math.min(s.age,s.duration),F=(1-Math.exp(-s.drag*t))/s.drag;s.x=s.startX+s.vx*F;s.y=s.startY+s.vy*F-9.81/s.drag*(t-F);s.z=s.startZ+s.vz*F;s.emit+=dt;
@@ -520,9 +523,35 @@
     lastSource.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
     return voice;
   }
+  // 上昇音「ヒュー」。正弦波(笛) + バンドパス白ノイズ(息) を noiseMix で混ぜ、f0 → f1 へ指数ランプ。
+  // 返す voice は {power, stop(fade), onended}。stop() は差し替え時のフェードアウト用。
+  function buildWhistle(c,bus,t,p,buffers){
+    const end=t+p.dur+p.release+.05,nodes=[];
+    const env=c.createGain();
+    env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain,t+p.attack);
+    env.gain.exponentialRampToValueAtTime(Math.max(.0005,p.gain*p.sustainEnd),t+p.dur);env.gain.linearRampToValueAtTime(0,t+p.dur+p.release);
+    env.connect(bus.dry);
+    const osc=c.createOscillator(),tone=c.createGain(),lfo=c.createOscillator(),depth=c.createGain();
+    osc.type='sine';osc.frequency.setValueAtTime(p.f0,t);osc.frequency.exponentialRampToValueAtTime(p.f1,t+p.dur);tone.gain.value=1-p.noiseMix;
+    lfo.type='sine';lfo.frequency.value=p.vibratoHz;depth.gain.value=p.f0*p.vibratoDepth;
+    lfo.connect(depth);depth.connect(osc.frequency);osc.connect(tone);tone.connect(env);
+    const src=c.createBufferSource(),bp=c.createBiquadFilter(),breath=c.createGain();
+    src.buffer=buffers.white;src.loop=true;bp.type='bandpass';bp.Q.value=p.q;
+    bp.frequency.setValueAtTime(p.f0,t);bp.frequency.exponentialRampToValueAtTime(p.f1,t+p.dur);
+    breath.gain.value=p.noiseMix*2.5; // Q=14 のバンドパスで落ちる分を補う
+    src.connect(bp);bp.connect(breath);breath.connect(env);
+    nodes.push(env,osc,tone,lfo,depth,src,bp,breath);
+    osc.start(t);lfo.start(t);src.start(t);osc.stop(end);lfo.stop(end);src.stop(end);
+    const voice={power:0,onended:null,stop(fade=.15){
+      const now=c.currentTime;env.gain.cancelScheduledValues(now);env.gain.setValueAtTime(env.gain.value,now);env.gain.linearRampToValueAtTime(0,now+fade);
+      const at=now+fade+.01;osc.stop(at);lfo.stop(at);src.stop(at);
+    }};
+    osc.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
+    return voice;
+  }
 
   class Soundscape{
-    constructor(){this.ctx=null;this.last=0;this.active=0;this.buffers=null;}
+    constructor(){this.ctx=null;this.last=0;this.active=0;this.buffers=null;this.whistles=[];}
     async init(){
       const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw new Error('Audio unavailable');
       if(!this.ctx){const c=this.ctx=new AC(),sr=c.sampleRate;
@@ -543,6 +572,14 @@
     }
     play(e){
       const c=this.ctx;if(!c||c.state!=='running')return;const now=c.currentTime,t=now+.005;
+      if(e.kind==='whistle'){
+        const verdict=whistleArbiter(this.whistles,{power:e.power,priority:!!e.priority});
+        if(verdict.action==='skip')return;
+        if(verdict.action==='replace'){const [old]=this.whistles.splice(verdict.index,1);old.stop(.15);}
+        const p=whistleProfile(e.power,e.duration,e.d),bus=this.bus(e,p.reverbSend),voice=buildWhistle(c,bus,t,p,this.buffers);
+        voice.power=e.power;voice.onended=()=>{const i=this.whistles.indexOf(voice);if(i>=0)this.whistles.splice(i,1);bus.release();};
+        this.whistles.push(voice);return;
+      }
       if(this.active>18||now-this.last<.035)return;this.last=now;this.active++;
       const p=profileFor(e.kind,e.power,e.d),bus=this.bus(e,p.reverbSend);
       const voice=buildBurst(c,bus,t,p,this.buffers);
@@ -553,12 +590,49 @@
       const OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!OAC)throw new Error('OfflineAudioContext unavailable');
       const sr=44100,c=new OAC(1,Math.ceil(sr*(duration+1)),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
       const bus={dry:master,sub:master,release(){}};
-      buildBurst(c,bus,.05,profileFor(kind,power,distance),buffers);
+      if(kind==='whistle')buildWhistle(c,bus,.05,whistleProfile(power,duration,distance),buffers);
+      else buildBurst(c,bus,.05,profileFor(kind,power,distance),buffers);
       return (await c.startRendering()).getChannelData(0);
     }
     async mute(value){if(!this.ctx)return;if(value)await this.ctx.suspend();else if(soundOn)await this.ctx.resume();}
   }
   const audio=new Soundscape();
+  // ---- 自己診断 (?selftest=1)。音は OfflineAudioContext に描画して「長さ・音程の向き・減衰の傾向」を検査する ----
+  const SELFTEST_SR=44100;
+  function zeroCrossingRate(data,from,to,sr=SELFTEST_SR){
+    const a=Math.max(1,Math.floor(from*sr)),b=Math.min(data.length-1,Math.floor(to*sr));let n=0;
+    for(let i=a;i<=b;i++)if((data[i-1]<0)!==(data[i]<0))n++;
+    return n/Math.max(1e-6,(b-a)/sr);
+  }
+  function audibleSeconds(data,threshold=.002,sr=SELFTEST_SR){
+    let first=-1,last=-1;for(let i=0;i<data.length;i++)if(Math.abs(data[i])>threshold){if(first<0)first=i;last=i;}
+    return first<0?0:(last-first)/sr;
+  }
+  // 20ms 窓の RMS を取り、ピークからピークの 10% を下回るまでの秒数
+  function decayProfile(data,sr=SELFTEST_SR){
+    const win=Math.floor(sr*.02),r=[];let peak=0,peakIndex=0;
+    for(let i=0;i+win<=data.length;i+=win){let s=0;for(let j=i;j<i+win;j++)s+=data[j]*data[j];const v=Math.sqrt(s/win);r.push(v);if(v>peak){peak=v;peakIndex=r.length-1;}}
+    for(let k=peakIndex;k<r.length;k++)if(r[k]<peak*.1)return {peak,time:(k-peakIndex)*win/sr};
+    return {peak,time:(r.length-peakIndex)*win/sr};
+  }
+  async function runSelfTest(){
+    const results=[],check=(name,pass,detail='')=>results.push({name,pass:!!pass,detail});
+    try{
+      const big=await audio.renderOffline('whistle',1.2,5.1),small=await audio.renderOffline('whistle',.6,5.1),pBig=whistleProfile(1.2,5.1,1000);
+      const length=audibleSeconds(big);
+      check('whistle length matches profile',Math.abs(length-pBig.dur)<.2,`${length.toFixed(2)}s vs ${pBig.dur.toFixed(2)}s`);
+      const early=zeroCrossingRate(big,.35,.85),late=zeroCrossingRate(big,.05+pBig.dur-.8,.05+pBig.dur-.3);
+      check('whistle pitch rises',late>early,`${early.toFixed(0)} -> ${late.toFixed(0)} crossings/s`);
+      const smallEarly=zeroCrossingRate(small,.35,.85);
+      check('small shell whistles higher',smallEarly>early,`${smallEarly.toFixed(0)} vs ${early.toFixed(0)}`);
+      const boomBig=decayProfile(await audio.renderOffline('burst',1.2)),boomSmall=decayProfile(await audio.renderOffline('burst',.6));
+      check('big boom decays longer',boomBig.time>boomSmall.time,`${boomBig.time.toFixed(2)}s vs ${boomSmall.time.toFixed(2)}s`);
+      check('big boom is louder',boomBig.peak>boomSmall.peak,`${boomBig.peak.toFixed(3)} vs ${boomSmall.peak.toFixed(3)}`);
+    }catch(err){check('offline audio render',false,String(err));}
+    const passed=results.filter(r=>r.pass).length;
+    console.table(results);toast(`自己診断 ${passed}/${results.length} 合格`);
+    return results;
+  }
   const icons={pause:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12m6-12v12" stroke-width="2.5"/></svg>',play:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 10 7-10 7Z" fill="currentColor" stroke="none"/></svg>',off:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 4-5 4H3v8h3l5 4V4Zm5 5 5 6m0-6-5 6"/></svg>',on:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 4-5 4H3v8h3l5 4V4Zm4 4c2 2 2 6 0 8m3-11c4 4 4 10 0 14"/></svg>'};
   function updatePause(){const label=paused?'再生':'一時停止';$('pause').innerHTML=paused?icons.play:icons.pause;$('pause').setAttribute('aria-label',label);$('pause').title=label;}
   function setPaused(value){paused=value;updatePause();audio.mute(paused).catch(()=>{});if(paused){cancelAnimationFrame(raf);raf=0;lastStamp=0;}else resumeLoop();}
@@ -574,7 +648,7 @@
     if(paused)setPaused(false);const nx=(x/W*2-1)*(W/H)/camera.lens,ny=(1-y/H*2)/camera.lens;
     const ray=camera.forward.map((v,i)=>v+camera.right[i]*nx+camera.up[i]*ny);const t=Math.abs(ray[2])>.05?-camera.eye[2]/ray[2]:camera.distance;
     const tx=clamp(camera.eye[0]+ray[0]*t,-340*spread(),340*spread()),ty=clamp(camera.eye[1]+ray[1]*t,220,490);
-    launch(pick(['yae','kiku','peony','willow','senrin','strobe','palm','ring']),tx,ty,rand(-40,70),rand(.8,1));
+    launch(pick(['yae','kiku','peony','willow','senrin','strobe','palm','ring']),tx,ty,rand(-40,70),rand(.8,1),pick(PALETTES),{priority:true});
   }
   function setupInput(){
     const pointers=new Map();let gesture=null,lastManual=-10;
@@ -623,6 +697,7 @@
   // Begin part-way through the opening ascent, keeping its physical trajectory.
   for(let i=0;i<165;i++)step(1/60);
   render();if(paused)toast('動きを抑える設定に合わせて停止中です。▶ で再生できます。');resumeLoop();
+  if(params.has('selftest'))window.HANABI_SELFTEST=runSelfTest();
 
 })();
 
