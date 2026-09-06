@@ -444,31 +444,35 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   function buildBurst(c,bus,t,p,buffers){
     const nodes=[],voice={onended:null};
     const link=(...chain)=>{for(let i=0;i<chain.length-1;i++)chain[i].connect(chain[i+1]);nodes.push(...chain.slice(0,-1));};
+    // 各ソースの停止を予約しつつ、最後に止まるソースを覚えておく（後始末はそこに付ける）
+    let lastSource=null,lastEnd=-Infinity;
+    const scheduleStop=(node,end)=>{node.stop(end);if(end>lastEnd){lastEnd=end;lastSource=node;}};
     const src=c.createBufferSource(),lp=c.createBiquadFilter(),env=c.createGain();
     src.buffer=buffers.brown;src.loop=true;
     lp.type='lowpass';lp.frequency.setValueAtTime(p.noiseCutoffStart,t);lp.frequency.exponentialRampToValueAtTime(p.noiseCutoffEnd,t+p.noiseDecay);
     env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain*.82,t+.008);env.gain.exponentialRampToValueAtTime(.001,t+p.noiseDecay);
     link(src,lp,env,bus.dry);
-    const end=t+p.noiseDecay+.05;src.start(t);src.stop(end);
+    const end=t+p.noiseDecay+.05;src.start(t);scheduleStop(src,end);
     if(p.crackGain){
       const crack=c.createBufferSource(),hp=c.createBiquadFilter(),cenv=c.createGain();
       crack.buffer=buffers.white;hp.type='highpass';hp.frequency.value=2500;
       cenv.gain.setValueAtTime(0,t);cenv.gain.linearRampToValueAtTime(p.gain*p.crackGain,t+.002);cenv.gain.exponentialRampToValueAtTime(.001,t+.015);
-      link(crack,hp,cenv,bus.dry);crack.start(t);crack.stop(t+.03);
+      link(crack,hp,cenv,bus.dry);crack.start(t);scheduleStop(crack,t+.03);
     }
     if(p.bodyHz){
       const body=c.createOscillator(),benv=c.createGain();
       body.type='sine';body.frequency.setValueAtTime(p.bodyHz,t);body.frequency.exponentialRampToValueAtTime(p.bodyHz*.5,t+p.bodyDecay);
       benv.gain.setValueAtTime(0,t);benv.gain.linearRampToValueAtTime(p.gain*p.bodyGain,t+.006);benv.gain.exponentialRampToValueAtTime(.001,t+p.bodyDecay);
-      link(body,benv,bus.sub);body.start(t);body.stop(t+p.bodyDecay+.02);
+      link(body,benv,bus.sub);body.start(t);scheduleStop(body,t+p.bodyDecay+.02);
     }
     if(p.bassStart){
       const bass=c.createOscillator(),genv=c.createGain();
       bass.type='sine';bass.frequency.setValueAtTime(p.bassStart,t);bass.frequency.exponentialRampToValueAtTime(p.bassEnd,t+p.bassDecay);
       genv.gain.setValueAtTime(0,t);genv.gain.linearRampToValueAtTime(p.gain*p.bassGain,t+.013);genv.gain.exponentialRampToValueAtTime(.001,t+p.bassDecay+.2);
-      link(bass,genv,bus.sub);bass.start(t);bass.stop(t+p.bassDecay+.25);
+      link(bass,genv,bus.sub);bass.start(t);scheduleStop(bass,t+p.bassDecay+.25);
     }
-    src.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
+    // 後始末は最後に止まるソースの onended に付ける（lift は低音がノイズ本体より長く鳴るため src では早すぎる）
+    lastSource.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
     return voice;
   }
 ```
@@ -508,7 +512,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
     // 自己診断用: 同じ builder で OfflineAudioContext に描画し、モノラルの波形を返す
     async renderOffline(kind,power,duration=5.1,distance=1000){
       const OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!OAC)throw new Error('OfflineAudioContext unavailable');
-      const sr=44100,c=new OAC(1,Math.ceil(sr*4),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
+      const sr=44100,c=new OAC(1,Math.ceil(sr*(duration+1)),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
       const bus={dry:master,sub:master,release(){}};
       buildBurst(c,bus,.05,profileFor(kind,power,distance),buffers);
       return (await c.startRendering()).getChannelData(0);
@@ -661,7 +665,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```js
     async renderOffline(kind,power,duration=5.1,distance=1000){
       const OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!OAC)throw new Error('OfflineAudioContext unavailable');
-      const sr=44100,seconds=kind==='whistle'?duration+1:4,c=new OAC(1,Math.ceil(sr*seconds),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
+      const sr=44100,c=new OAC(1,Math.ceil(sr*(duration+1)),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
       const bus={dry:master,sub:master,release(){}};
       if(kind==='whistle')buildWhistle(c,bus,.05,whistleProfile(power,duration,distance),buffers);
       else buildBurst(c,bus,.05,profileFor(kind,power,distance),buffers);
