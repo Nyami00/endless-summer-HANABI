@@ -64,6 +64,12 @@
     .program i { width: 34px; height: 1px; margin-top: 3px; background: #b98e5566; }
     .quiet .program { opacity: 0; }
     #reset-view { opacity: .75; }
+    .brand { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; pointer-events: auto; cursor: default; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+    .launcher { position: fixed; left: 50%; bottom: calc(max(28px, env(safe-area-inset-bottom)) + 118px); transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; max-width: calc(100% - 32px); border: 1px solid rgba(204,216,255,.16); background: rgba(6,10,17,.72); border-radius: 18px; box-shadow: 0 12px 50px #0005, inset 0 1px 0 #ffffff05; backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+    .launcher input { width: min(300px, 52vw); background: transparent; border: 0; color: #f5f4fa; font-size: 16px; letter-spacing: .08em; padding: 8px 0; }
+    .launcher input::placeholder { color: #8b91a0; }
+    .launcher .icon-button { width: 38px; height: 38px; flex-shrink: 0; }
     @media(max-width: 1000px) { .program { left: 24px; bottom: 140px; gap: 5px; } .program span:nth-child(2) { font-size: 15px; } .program i { display: none; } }
     @media(max-width: 600px) {
       .top { top: max(22px,env(safe-area-inset-top)); left: 20px; right: 20px; }
@@ -81,9 +87,10 @@
       .finale { padding: 12px; gap: 6px; }
       .divider { display: none; }
       .hint { font-size: 12px; margin-bottom: 14px; }
+      .launcher { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 104px); }
     }
     @media(max-width: 360px) { .finale svg { display: none; } .density-label { gap: 5px; } .panel { gap: 9px; padding: 10px; } .density { width: 100px; } .finale { padding: 11px 8px; } .tools { gap: 4px; } .tools .icon-button { width: 36px; height: 36px; } }
-    @media(max-height: 440px) { .program { display: none; } .top { top: 16px; } .bottom { bottom: 12px; } .hint { display: none; } .panel { padding: 8px 14px; } }
+    @media(max-height: 440px) { .program { display: none; } .top { top: 16px; } .bottom { bottom: 12px; } .hint { display: none; } .panel { padding: 8px 14px; } .launcher { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px); } }
     @media(prefers-reduced-motion: reduce) { * { transition: none !important; } }
   </style>
 </head>
@@ -115,6 +122,12 @@
     </div>
   </div>
   <button class="icon-button" id="restore" aria-label="操作パネルを表示" title="操作パネルを表示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="#101729"/><circle cx="15" cy="17" r="2" fill="#101729"/></svg></button>
+  <form class="launcher" id="launcher" hidden aria-label="文字花火">
+    <label for="text-input" class="visually-hidden">打ち上げる文字</label>
+    <input id="text-input" type="text" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" placeholder="文字を入力して Enter（6文字まで）">
+    <button type="submit" class="icon-button" aria-label="打ち上げる" title="打ち上げる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0-5 5m5-5 5 5"/></svg></button>
+    <button type="button" class="icon-button" id="launcher-close" aria-label="閉じる" title="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </form>
   <div id="notice" role="status" aria-live="polite"></div>
   <script>
 (() => {
@@ -387,6 +400,9 @@
     const out=normalizePoints(points);glyphCache.set(char,out);return out;
   }
   const textQueue=[];let lastTextLaunch=-10;
+  // ?text=祝 → 起動 2.5 秒後に自動で 1 回。urlTextAt はプリロール後にブートストラップで設定する
+  const urlText=sanitizeText(params.get('text')||'').chars.join('');let urlTextAt=-1;
+  function pumpUrlText(){if(urlTextAt>=0&&simTime>=urlTextAt){urlTextAt=-1;launchText(urlText);}}
   // 文字列を 1 文字 1 発に分けて simTime 基準で予約する（setTimeout は一時停止と整合しないため使わない）
   function launchText(text){
     const {chars,truncated}=sanitizeText(text);if(!chars.length)return false;
@@ -687,7 +703,7 @@
   function resetView(){camera.targetYaw=0;camera.targetPitch=0;camera.targetZoom=1;if(paused){updateCamera(10);render();}}
   function setQuiet(value){quiet=value;document.body.classList.toggle('quiet',value);document.querySelector('.top').inert=value;document.querySelector('.bottom').inert=value;if(value)$('restore').focus({preventScroll:true});else $('hide').focus({preventScroll:true});}
   function render(){makeDrawData();renderer.render();}
-  function step(dt){simTime+=dt;director(dt);pumpTextQueue();updatePhysics(dt);}
+  function step(dt){simTime+=dt;director(dt);pumpUrlText();pumpTextQueue();updatePhysics(dt);}
   function frame(stamp){raf=0;if(paused||document.hidden)return;const dt=lastStamp?clamp((stamp-lastStamp)/1000,0,.1):1/60;lastStamp=stamp;accumulator+=dt;
     while(accumulator>=1/60){step(1/60);accumulator-=1/60;}updateCamera(dt);render();raf=requestAnimationFrame(frame);
   }
@@ -697,6 +713,33 @@
     const ray=camera.forward.map((v,i)=>v+camera.right[i]*nx+camera.up[i]*ny);const t=Math.abs(ray[2])>.05?-camera.eye[2]/ray[2]:camera.distance;
     const tx=clamp(camera.eye[0]+ray[0]*t,-340*spread(),340*spread()),ty=clamp(camera.eye[1]+ray[1]*t,220,490);
     launch(pick(['yae','kiku','peony','willow','senrin','strobe','palm','ring']),tx,ty,rand(-40,70),rand(.8,1),pick(PALETTES),{priority:true});
+  }
+  // ---- 文字花火の隠し UI。T キー / ロゴ長押し / ?text= で開く。表パネルには出さない ----
+  function setupLauncher(){
+    const form=$('launcher'),input=$('text-input'),brand=document.querySelector('.brand');
+    let composing=false,pressTimer=0,pressStart=null;
+    const open=()=>{form.hidden=false;input.focus({preventScroll:true});input.select();};
+    const close=()=>{if(form.hidden)return;form.hidden=true;surface.focus({preventScroll:true});};
+    input.addEventListener('compositionstart',()=>{composing=true;});
+    input.addEventListener('compositionend',()=>{composing=false;});
+    input.addEventListener('keydown',e=>{
+      // 日本語変換の確定 Enter では打ち上げない
+      if(e.key==='Enter'&&(e.isComposing||e.keyCode===229||composing)){e.preventDefault();return;}
+      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}
+    });
+    form.addEventListener('submit',e=>{e.preventDefault();if(composing)return;if(paused)setPaused(false);if(launchText(input.value))close();});
+    $('launcher-close').addEventListener('click',close);
+    const isTyping=el=>!!el&&(el.isContentEditable||el.tagName==='TEXTAREA'||(el.tagName==='INPUT'&&!['range','checkbox','radio','button'].includes(el.type)));
+    document.addEventListener('keydown',e=>{
+      if((e.key==='t'||e.key==='T')&&!isTyping(e.target)&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();open();}
+    });
+    surface.addEventListener('pointerdown',close);
+    brand.addEventListener('contextmenu',e=>e.preventDefault());
+    const cancelPress=()=>{clearTimeout(pressTimer);pressStart=null;};
+    brand.addEventListener('pointerdown',e=>{pressStart={x:e.clientX,y:e.clientY};clearTimeout(pressTimer);pressTimer=setTimeout(()=>{pressStart=null;open();},600);});
+    brand.addEventListener('pointermove',e=>{if(pressStart&&Math.hypot(e.clientX-pressStart.x,e.clientY-pressStart.y)>10)cancelPress();});
+    for(const type of ['pointerup','pointercancel','pointerleave'])brand.addEventListener(type,cancelPress);
+    return {open,close,isOpen:()=>!form.hidden};
   }
   function setupInput(){
     const pointers=new Map();let gesture=null,lastManual=-10;
@@ -741,11 +784,14 @@
     const replacement=surface.cloneNode(true);surface.replaceWith(replacement);surface=replacement;
     try{renderer=new CanvasRenderer(surface);}catch{$('notice').textContent='このブラウザーでは花火を表示できません。';$('notice').classList.add('show');return;}
   }
-  updateCamera(10);setupInput();updatePause();
+  updateCamera(10);setupInput();setupLauncher();updatePause();
   // Begin part-way through the opening ascent, keeping its physical trajectory.
   for(let i=0;i<165;i++)step(1/60);
+  if(urlText)urlTextAt=simTime+2.5;
   render();if(paused)toast('動きを抑える設定に合わせて停止中です。▶ で再生できます。');resumeLoop();
   if(params.has('debug'))window.HANABI=Object.freeze({launchText,sampleGlyph,sanitizeText,textLayout,burstProfile,whistleProfile,whistleArbiter,audio,
+    // 検証用: rAF が止まる環境でも決定的にシミュレーションを進めて描画する（seconds 秒ぶん 1/60 刻み）
+    advance:(seconds=1)=>{const n=Math.round(seconds*60);for(let i=0;i<n;i++)step(1/60);updateCamera(10);render();return simTime;},
     state:()=>({stars:stars.length,shells:shells.length,soundEvents:soundEvents.length,whistles:audio.whistles.length,textQueue:textQueue.length})});
   if(params.has('selftest'))window.HANABI_SELFTEST=runSelfTest();
 
