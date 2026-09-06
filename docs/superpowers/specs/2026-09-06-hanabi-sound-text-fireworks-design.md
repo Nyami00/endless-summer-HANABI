@@ -62,11 +62,12 @@
 | gain | `mix(0.09, 0.16, s) * dist` | 全体音量。ドンより控えめ |
 | vibratoHz / vibratoDepth | `5.5` / `mix(0.004, 0.012, s)` | 笛成分のビブラート（周波数比） |
 | q | `14` | 帯域ノイズのバンドパス Q |
+| breathGain | `2.5` | 息成分の補正係数（Q=14 のバンドパスで落ちる分を補う）。builder 側に裸の定数を置かない |
 | reverbSend | `0.5` | |
 
 `whistleArbiter(active, incoming, max = 3)` → 同時発音の裁定。`active` は鳴っている笛の `{power}` 配列、`incoming` は `{power, priority}`。
 
-- `priority` が真なら常に `{action: 'start'}`（タップと文字花火）
+- `priority` が真（タップと文字花火）なら、`active.length < 2 * max` のときは `{action: 'start'}`、それ以上なら最弱を差し替える `{action: 'replace', index}`。タップ連打（0.3 秒間隔）や Enter 長押しで笛が無制限に積み上がらないための天井
 - `active.length < max` なら `{action: 'start'}`
 - 上限到達時、`incoming.power` が最弱の active より 0.15 以上大きければ `{action: 'replace', index}`（最弱を 0.15 秒でフェードアウトして差し替え）
 - それ以外は `{action: 'skip'}`
@@ -80,6 +81,7 @@
 - ヒュー: 正弦波オシレーター（周波数を f0 → f1 へ指数ランプ、LFO でビブラート）と、ノイズバッファ → バンドパス（中心周波数を同じ軌道でランプ、Q 14）の2系統を `noiseMix` で混ぜ、包絡ゲイン → パン → master と reverb へ。パンは発射台の位置で固定（上昇中の追従はしない）
 - ヒューの発音数は `whistleArbiter` で裁定する。鳴っている笛は `{power, stop(fadeSec)}` として保持し、終了時に配列から外す
 - 一時停止・非表示時は既存どおり `ctx.suspend()` で止まる。simTime も止まるので整合する
+- フレームループは `step()` を try/catch で包む（最初の数回だけ `console.error`）。`play()` や文字の点群化で例外が出ても描画ループが永久停止しないため（`frame()` は末尾で次の rAF を予約する構造なので、途中の例外はページの凍結になる）
 
 ### 1.3 スケジューリング
 
@@ -137,7 +139,7 @@
 - `openShell()` の `'text'` 分岐:
   - `pts = sampleGlyph(glyph)`、速度の大きさ `v = R / 1.106`（`F(1.5s) = (1 - e^(-0.43 * 1.5)) / 0.43 ≈ 1.106` の逆数）
   - 各点 `(nx, ny)` について、開花時点のカメラ右方向 `camera.right` を使い `vx = nx * v * right.x`、`vz = nx * v * right.z`、`vy = ny * v + 3`。これで文字面がカメラ正面を向き、視点を振っていても読める。奥行きの瞬きとして `vz` に ±1.5 を加える
-  - 星のオプション: `life 3.6`、`tail 0`（尾を引かない）、`goldStart 0`、`change 0.7`、`secondary palette[1]`、`size 6.0`、`twinkle 0.25`、`drag` は既定の 0.43（全星で同一なので形が崩れない）
+  - 星のオプション: `life 3.6`（±3% のばらつきを付け、一斉に消えず溶けるように消す）、`tail 0`（尾を引かない）、`goldStart 0`、`change 0.7`、`secondary palette[1]`、`size 6.0`、`twinkle 0.25`、`drag` は既定の 0.43（全星で同一なので形が崩れない）
   - 閃光・煙・音は `power` を使って通常の玉と同じに出す（音は `burst`）
 - `addStar()` の星数上限（3100 / モバイル 2100）は、文字玉からの追加に限り +900 まで許容する
 - `launchText(text)`: `sanitizeText` → `textLayout` → 各 shell を `delay` 秒後に `launch('text', x, y, 0, power, pick(PALETTES), {glyph, R})`。遅延は `setTimeout` ではなく simTime 基準の予約キューで行う（一時停止と整合させる）。`truncated` のときはトースト「文字花火は6文字まで。「○○○○○○」を打ち上げます。」
@@ -149,7 +151,7 @@
 ```html
 <form class="launcher" id="launcher" hidden aria-label="文字花火">
   <label for="text-input" class="visually-hidden">打ち上げる文字</label>
-  <input id="text-input" type="text" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" placeholder="文字を入力して Enter（6文字まで）">
+  <input id="text-input" type="text" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" placeholder="文字を入力（6文字まで）">
   <button type="submit" class="icon-button" aria-label="打ち上げる">(svg)</button>
   <button type="button" class="icon-button" id="launcher-close" aria-label="閉じる">(svg)</button>
 </form>
