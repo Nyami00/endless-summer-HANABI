@@ -777,7 +777,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 2: `launch` の上限と `updatePhysics` の開花呼び出しを変える**
 
-`launch()` 1 行目: `if(shells.length>=16)return;` → `if(shells.length>=(extra.glyph?24:16))return;`
+`launch()` 1 行目: `if(shells.length>=16)return;` → `if(shells.length>=(extra.glyph?24:16))return false;`、関数末尾（whistle の `queueSound` の直後）に `return true;` を追加する。`launch()` は「玉を積めたら true、上限で積めなければ false」を返す（`pumpTextQueue` が失敗した予約を持ち越すために使う。既存の呼び出し元は戻り値を見ていないので影響なし）
 
 `updatePhysics()` の `if(s.age>=s.duration){openShell(s.tx,s.ty,s.tz,s.type,s.power,s.palette);` → `if(s.age>=s.duration){openShell(s.tx,s.ty,s.tz,s.type,s.power,s.palette,false,s.extra||{});`
 
@@ -816,7 +816,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
     if(truncated)toast(`文字花火は6文字まで。「${chars.join('')}」を打ち上げます。`);
     return true;
   }
-  function pumpTextQueue(){while(textQueue.length&&textQueue[0].at<=simTime){const e=textQueue.shift();launch(e.type,e.x,e.y,0,e.power,e.palette,e.extra);}}
+  // 期限が来た予約をすべて打ち上げる。先頭以外も見るので、続けて入力された文字列（予約が時刻順に並ばない）でも順番どおりに上がる。
+  // 玉の上限で launch が false を返した予約は取り除かず、次フレーム以降に持ち越す（文字が黙って欠けない）。
+  function pumpTextQueue(){for(let i=0;i<textQueue.length;){const e=textQueue[i];if(e.at<=simTime&&launch(e.type,e.x,e.y,0,e.power,e.palette,e.extra))textQueue.splice(i,1);else i++;}}
 ```
 
 注意: `spread` は `openShell` より後ろの行で `const spread=()=>...` として定義されているが、`launchText` は実行時にしか参照しないので問題ない（TDZ は関数本体の実行時にのみ関係する）。
