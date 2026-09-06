@@ -352,7 +352,7 @@
     return [x*Math.cos(tilt)-y*Math.sin(tilt),x*Math.sin(tilt)+y*Math.cos(tilt),z];
   }
   function addStar(x,y,z,vx,vy,vz,color,life,o={}){
-    if(stars.length>=(W<600?2100:3100))return;
+    if(stars.length>=(W<600?2100:3100)+(o.force?900:0))return;
     const p={x,y,z,vx,vy,vz,age:0,life,primary:color,secondary:o.secondary||color,drag:o.drag??.43,size:o.size??5.7,tail:o.tail??.8,twinkle:o.twinkle??0,seed:rand(0,10),emit:rand(0,.12),emitInterval:o.emitInterval??.105,emberLife:o.emberLife??1.2,change:o.change??.65,goldStart:o.goldStart??.2,crackle:!!o.crackle,hist:new Float32Array(HIST*3),head:0,histCount:1,histClock:0};
     p.hist[0]=x;p.hist[1]=y;p.hist[2]=z;stars.push(p);
   }
@@ -366,7 +366,38 @@
     const d=Math.hypot(x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]);soundEvents.push({at:simTime+d/343,x,y,z,d,power,kind,...extra});
     if(soundEvents.length>100)soundEvents.shift();
   }
-  function openShell(x,y,z,type='yae',power=1,palette=pick(PALETTES),mini=false){
+  // ---- 文字花火 ----
+  const GLYPH_FONT='"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans CJK JP","Noto Sans JP",sans-serif';
+  const GLYPH_SIZE=128,glyphCache=new Map();let glyphCanvas=null;
+  // 1 文字を非表示キャンバスに描き、格子でサンプリングして [-1,1] の点列にする。点数が 40〜320 に収まるよう step を調整する。
+  function sampleGlyph(char){
+    if(glyphCache.has(char))return glyphCache.get(char);
+    if(!glyphCanvas){glyphCanvas=document.createElement('canvas');glyphCanvas.width=glyphCanvas.height=GLYPH_SIZE;}
+    const g=glyphCanvas.getContext('2d',{willReadFrequently:true});
+    g.clearRect(0,0,GLYPH_SIZE,GLYPH_SIZE);g.fillStyle='#fff';g.font=`bold 100px ${GLYPH_FONT}`;g.textAlign='center';g.textBaseline='middle';
+    g.fillText(char,GLYPH_SIZE/2,GLYPH_SIZE/2+2);
+    const alpha=g.getImageData(0,0,GLYPH_SIZE,GLYPH_SIZE).data,tried=new Set();
+    let step=3,points=[];
+    for(let guard=0;guard<5;guard++){
+      tried.add(step);points=[];
+      for(let y=step>>1;y<GLYPH_SIZE;y+=step)for(let x=step>>1;x<GLYPH_SIZE;x+=step)
+        if(alpha[(y*GLYPH_SIZE+x)*4+3]>120)points.push(x+rand(-.35,.35)*step,y+rand(-.35,.35)*step);
+      const next=pickStep(points.length/2,step);if(next===step||tried.has(next))break;step=next;
+    }
+    const out=normalizePoints(points);glyphCache.set(char,out);return out;
+  }
+  const textQueue=[];let lastTextLaunch=-10;
+  // 文字列を 1 文字 1 発に分けて simTime 基準で予約する（setTimeout は一時停止と整合しないため使わない）
+  function launchText(text){
+    const {chars,truncated}=sanitizeText(text);if(!chars.length)return false;
+    if(simTime-lastTextLaunch<1.2)return false;lastTextLaunch=simTime;
+    const {shells:plan}=textLayout(chars,{halfWidth:330*spread()}),palette=pick(PALETTES);
+    for(const s of plan)textQueue.push({at:simTime+s.delay,type:'text',x:s.x,y:s.y,power:s.power,palette,extra:{glyph:s.char,R:s.R,priority:true}});
+    if(truncated)toast(`文字花火は6文字まで。「${chars.join('')}」を打ち上げます。`);
+    return true;
+  }
+  function pumpTextQueue(){while(textQueue.length&&textQueue[0].at<=simTime){const e=textQueue.shift();launch(e.type,e.x,e.y,0,e.power,e.palette,e.extra);}}
+  function openShell(x,y,z,type='yae',power=1,palette=pick(PALETTES),mini=false,extra={}){
     const quality=W<600?.78:1,spin=rand(0,TAU),baseSpeed=110*power;
     flash(x,y,z,palette[0],mini?.18:power);if(!mini){queueSound(x,y,z,power,type==='crackle'?'crackle':'burst');puff(x,y,z,70*power);for(let j=0;j<6;j++){const d=direction(j,6,spin);puff(x+d[0]*25,y+d[1]*25,z+d[2]*25,rand(28,55)*power);}}
     function sphere(count,speed,col,life,options={}){const n=Math.round(count*quality);for(let i=0;i<n;i++){const d=direction(i,n,spin),v=speed*rand(.986,1.014);addStar(x,y,z,d[0]*v,d[1]*v+3,d[2]*v,col,life*rand(.975,1.025),options);}}
@@ -397,10 +428,17 @@
       sphere(90,baseSpeed*.34,palette[2],3.3,{tail:.5,goldStart:.1});
     }else if(type==='heart'){
       const n=Math.round(180*quality);for(let i=0;i<n;i++){const a=i/n*TAU,vx=16*Math.sin(a)**3/18*baseSpeed,vy=(13*Math.cos(a)-5*Math.cos(2*a)-2*Math.cos(3*a)-Math.cos(4*a))/18*baseSpeed;addStar(x,y,z,vx,vy,rand(-1,1),C.red,3.8,{tail:.05,goldStart:0,secondary:C.pink,change:.75});}
+    }else if(type==='text'){
+      // 点群を開花時のカメラ右方向に沿って並べ、文字面がカメラ正面を向くようにする。全星の drag が同じなので形は落下しても崩れない。
+      const pts=sampleGlyph(extra.glyph||'?'),v=(extra.R||90)/1.106,rx=camera.right[0],rz=camera.right[2];
+      for(let i=0;i<pts.length;i+=2){
+        const nx=pts[i],ny=pts[i+1];
+        addStar(x,y,z,nx*v*rx,ny*v+3,nx*v*rz+rand(-1.5,1.5),palette[0],3.6*rand(.97,1.03),{secondary:palette[1],change:.7,goldStart:0,tail:0,size:6.0,twinkle:.25,force:true});
+      }
     }
   }
   function launch(type='yae',x=0,y=400,z=0,power=1,palette=pick(PALETTES),extra={}){
-    if(shells.length>=16)return;
+    if(shells.length>=(extra.glyph?24:16))return;
     const stations=[-300,-150,0,150,300],start=stations.reduce((a,b)=>Math.abs(b-x)<Math.abs(a-x)?b:a,0),duration=4.55+y*.0015,drag=.35,F=(1-Math.exp(-drag*duration))/drag;
     shells.push({x:start,y:3,z,startX:start,startY:3,startZ:z,vx:(x-start)/F,vy:(y-3+9.81/drag*(duration-F))/F,vz:0,drag,duration,age:0,type,power,palette,tx:x,ty:y,tz:z,emit:0,hist:[],extra});
     puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);
@@ -410,7 +448,7 @@
   function updatePhysics(dt){
     for(let i=shells.length-1;i>=0;i--){const s=shells[i];s.age+=dt;const t=Math.min(s.age,s.duration),F=(1-Math.exp(-s.drag*t))/s.drag;s.x=s.startX+s.vx*F;s.y=s.startY+s.vy*F-9.81/s.drag*(t-F);s.z=s.startZ+s.vz*F;s.emit+=dt;
       if(s.emit>=.022){s.emit=0;addEmber(s.x,s.y,s.z,rand(-1.5,1.5),rand(-4,2),rand(-1.5,1.5),rand(.8,1.35),2.5);s.hist.unshift([s.x,s.y,s.z]);if(s.hist.length>12)s.hist.pop();}
-      if(s.age>=s.duration){openShell(s.tx,s.ty,s.tz,s.type,s.power,s.palette);shells[i]=shells[shells.length-1];shells.pop();}
+      if(s.age>=s.duration){openShell(s.tx,s.ty,s.tz,s.type,s.power,s.palette,false,s.extra||{});shells[i]=shells[shells.length-1];shells.pop();}
     }
     for(let i=subshells.length-1;i>=0;i--){const s=subshells[i];s.age+=dt;const drag=Math.exp(-.25*dt);s.vx*=drag;s.vy=s.vy*drag-9.81*dt;s.vz*=drag;s.x+=s.vx*dt;s.y+=s.vy*dt;s.z+=s.vz*dt;
       if(s.age>=s.delay){openShell(s.x,s.y,s.z,'small',.75,[s.color,s.color,C.gold],true);if(i%5===0)queueSound(s.x,s.y,s.z,.16,'small');puff(s.x,s.y,s.z,12,12);subshells[i]=subshells[subshells.length-1];subshells.pop();}
@@ -631,6 +669,11 @@
       check('big boom decays longer',boomBig.time>boomSmall.time,`${boomBig.time.toFixed(2)}s vs ${boomSmall.time.toFixed(2)}s`);
       check('big boom is louder',boomBig.peak>boomSmall.peak,`${boomBig.peak.toFixed(3)} vs ${boomSmall.peak.toFixed(3)}`);
     }catch(err){check('offline audio render',false,String(err));}
+    for(const ch of ['祝','A','あ']){
+      const pts=sampleGlyph(ch),n=pts.length/2;let inRange=true;
+      for(let i=0;i<pts.length;i++)if(Math.abs(pts[i])>1.0001)inRange=false;
+      check(`glyph ${ch} sampled`,n>=40&&n<=320&&inRange,`${n} points`);
+    }
     const passed=results.filter(r=>r.pass).length;
     console.table(results);toast(`自己診断 ${passed}/${results.length} 合格`);
     return results;
@@ -641,7 +684,7 @@
   function resetView(){camera.targetYaw=0;camera.targetPitch=0;camera.targetZoom=1;if(paused){updateCamera(10);render();}}
   function setQuiet(value){quiet=value;document.body.classList.toggle('quiet',value);document.querySelector('.top').inert=value;document.querySelector('.bottom').inert=value;if(value)$('restore').focus({preventScroll:true});else $('hide').focus({preventScroll:true});}
   function render(){makeDrawData();renderer.render();}
-  function step(dt){simTime+=dt;director(dt);updatePhysics(dt);}
+  function step(dt){simTime+=dt;director(dt);pumpTextQueue();updatePhysics(dt);}
   function frame(stamp){raf=0;if(paused||document.hidden)return;const dt=lastStamp?clamp((stamp-lastStamp)/1000,0,.1):1/60;lastStamp=stamp;accumulator+=dt;
     while(accumulator>=1/60){step(1/60);accumulator-=1/60;}updateCamera(dt);render();raf=requestAnimationFrame(frame);
   }
@@ -699,6 +742,8 @@
   // Begin part-way through the opening ascent, keeping its physical trajectory.
   for(let i=0;i<165;i++)step(1/60);
   render();if(paused)toast('動きを抑える設定に合わせて停止中です。▶ で再生できます。');resumeLoop();
+  if(params.has('debug'))window.HANABI=Object.freeze({launchText,sampleGlyph,sanitizeText,textLayout,burstProfile,whistleProfile,whistleArbiter,audio,
+    state:()=>({stars:stars.length,shells:shells.length,soundEvents:soundEvents.length,whistles:audio.whistles.length,textQueue:textQueue.length})});
   if(params.has('selftest'))window.HANABI_SELFTEST=runSelfTest();
 
 })();
