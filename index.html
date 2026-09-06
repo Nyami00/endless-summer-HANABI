@@ -166,9 +166,9 @@
       return {gain:.35*power*dist,noiseCutoffStart:380,noiseCutoffEnd:90,noiseDecay:.38,bassStart:mix(80,55,s),bassEnd:30,bassDecay:mix(.3,.5,s),bassGain:.66,reverbSend:1};
     }
     function whistleProfile(power,duration,d){
-      const s=sizeOf(power),dist=distFactor(d),f0=mix(1500,620,s),endGap=mix(.2,.35,s);
+      const s=sizeOf(power),dist=distFactor(d),f0=mix(2000,850,s),endGap=mix(.2,.35,s);
       return {f0,f1:f0*Math.pow(2,mix(3,5,s)/12),endGap,dur:Math.max(.6,duration-endGap),attack:.12,release:.08,sustainEnd:.55,
-        noiseMix:mix(.35,.75,s),gain:mix(.09,.16,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,breathGain:2.5,reverbSend:.5};
+        noiseMix:mix(.35,.75,s),gain:mix(.06,.11,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,breathGain:2.5,reverbSend:.5};
     }
     // 同時に鳴らす笛の裁定。active は鳴っている笛 [{power}], incoming は {power, priority}
     // priority（タップ・文字花火）は必ず鳴らすが、2*max 本を超えては積まず最弱と差し替える（連打で無制限に重ならないための天井）
