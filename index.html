@@ -543,7 +543,9 @@
     nodes.push(env,osc,tone,lfo,depth,src,bp,breath);
     osc.start(t);lfo.start(t);src.start(t);osc.stop(end);lfo.stop(end);src.stop(end);
     const voice={power:0,onended:null,stop(fade=.15){
-      const now=c.currentTime;env.gain.cancelScheduledValues(now);env.gain.setValueAtTime(env.gain.value,now);env.gain.linearRampToValueAtTime(0,now+fade);
+      // 生成と同じ tick で止められると now<t で予約が全消去され env.gain.value が既定値 1 を返すため、その場合は 0 から落とす
+      const now=c.currentTime,from=now<t?0:env.gain.value;
+      env.gain.cancelScheduledValues(now);env.gain.setValueAtTime(from,now);env.gain.linearRampToValueAtTime(0,now+fade);
       const at=now+fade+.01;osc.stop(at);lfo.stop(at);src.stop(at);
     }};
     osc.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
