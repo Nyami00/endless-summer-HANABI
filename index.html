@@ -87,7 +87,7 @@
       .finale { padding: 12px; gap: 6px; }
       .divider { display: none; }
       .hint { font-size: 12px; margin-bottom: 14px; }
-      .launcher { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 104px); }
+      .launcher { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 120px); }
     }
     @media(max-width: 360px) { .finale svg { display: none; } .density-label { gap: 5px; } .panel { gap: 9px; padding: 10px; } .density { width: 100px; } .finale { padding: 11px 8px; } .tools { gap: 4px; } .tools .icon-button { width: 36px; height: 36px; } }
     @media(max-height: 440px) { .program { display: none; } .top { top: 16px; } .bottom { bottom: 12px; } .hint { display: none; } .panel { padding: 8px 14px; } .launcher { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px); } }
@@ -124,7 +124,7 @@
   <button class="icon-button" id="restore" aria-label="操作パネルを表示" title="操作パネルを表示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="#101729"/><circle cx="15" cy="17" r="2" fill="#101729"/></svg></button>
   <form class="launcher" id="launcher" hidden aria-label="文字花火">
     <label for="text-input" class="visually-hidden">打ち上げる文字</label>
-    <input id="text-input" type="text" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" placeholder="文字を入力して Enter（6文字まで）">
+    <input id="text-input" type="text" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" placeholder="文字を入力（6文字まで）">
     <button type="submit" class="icon-button" aria-label="打ち上げる" title="打ち上げる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0-5 5m5-5 5 5"/></svg></button>
     <button type="button" class="icon-button" id="launcher-close" aria-label="閉じる" title="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </form>
@@ -168,13 +168,15 @@
     function whistleProfile(power,duration,d){
       const s=sizeOf(power),dist=distFactor(d),f0=mix(1500,620,s),endGap=mix(.2,.35,s);
       return {f0,f1:f0*Math.pow(2,mix(3,5,s)/12),endGap,dur:Math.max(.6,duration-endGap),attack:.12,release:.08,sustainEnd:.55,
-        noiseMix:mix(.35,.75,s),gain:mix(.09,.16,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,reverbSend:.5};
+        noiseMix:mix(.35,.75,s),gain:mix(.09,.16,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,breathGain:2.5,reverbSend:.5};
     }
     // 同時に鳴らす笛の裁定。active は鳴っている笛 [{power}], incoming は {power, priority}
+    // priority（タップ・文字花火）は必ず鳴らすが、2*max 本を超えては積まず最弱と差し替える（連打で無制限に重ならないための天井）
     function whistleArbiter(active,incoming,max=3){
-      if(incoming.priority)return {action:'start'};
+      const weakest=()=>{let index=0;for(let i=1;i<active.length;i++)if(active[i].power<active[index].power)index=i;return index;};
+      if(incoming.priority)return active.length<max*2?{action:'start'}:{action:'replace',index:weakest()};
       if(active.length<max)return {action:'start'};
-      let index=0;for(let i=1;i<active.length;i++)if(active[i].power<active[index].power)index=i;
+      const index=weakest();
       if(incoming.power-active[index].power>=.15)return {action:'replace',index};
       return {action:'skip'};
     }
@@ -377,7 +379,7 @@
   function flash(x,y,z,color,power=1){lights.push({x,y,z,color,age:0,life:3.4,power});if(lights.length>25)lights.shift();}
   function queueSound(x,y,z,power=1,kind='burst',extra={}){
     const d=Math.hypot(x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]);soundEvents.push({at:simTime+d/343,x,y,z,d,power,kind,...extra});
-    if(soundEvents.length>100)soundEvents.shift();
+    if(soundEvents.length>160)soundEvents.shift();
   }
   // ---- 文字花火 ----
   const GLYPH_FONT='"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans CJK JP","Noto Sans JP",sans-serif';
@@ -387,6 +389,7 @@
     if(glyphCache.has(char))return glyphCache.get(char);
     if(!glyphCanvas){glyphCanvas=document.createElement('canvas');glyphCanvas.width=glyphCanvas.height=GLYPH_SIZE;}
     const g=glyphCanvas.getContext('2d',{willReadFrequently:true});
+    if(!g){const empty=new Float32Array(0);glyphCache.set(char,empty);return empty;} // 2D コンテキストが取れない環境では文字を描かない（落とさない）
     g.clearRect(0,0,GLYPH_SIZE,GLYPH_SIZE);g.fillStyle='#fff';g.font=`bold 100px ${GLYPH_FONT}`;g.textAlign='center';g.textBaseline='middle';
     g.fillText(char,GLYPH_SIZE/2,GLYPH_SIZE/2+2);
     const alpha=g.getImageData(0,0,GLYPH_SIZE,GLYPH_SIZE).data,tried=new Set();
@@ -534,7 +537,7 @@
 
   // ---- 音声グラフの部品。ライブ再生（AudioContext）と自己診断（OfflineAudioContext）で共用する ----
   function prepareBuffers(c){
-    const sr=c.sampleRate,brown=c.createBuffer(1,Math.floor(sr*2.5),sr),white=c.createBuffer(1,Math.floor(sr*1),sr);
+    const sr=c.sampleRate,brown=c.createBuffer(1,Math.floor(sr*3),sr),white=c.createBuffer(1,Math.floor(sr*3),sr);
     const b=brown.getChannelData(0);let acc=0;for(let i=0;i<b.length;i++){acc=(acc+(Math.random()*2-1)*.09)/1.025;b[i]=acc*2.7;}
     const w=white.getChannelData(0);for(let i=0;i<w.length;i++)w[i]=Math.random()*2-1;
     return {brown,white};
@@ -558,6 +561,7 @@
     env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain*.82,t+.008);env.gain.exponentialRampToValueAtTime(.001,t+p.noiseDecay);
     link(src,lp,env,bus.dry);
     const end=t+p.noiseDecay+.05;src.start(t);scheduleStop(src,end);
+    // 各レイヤーはプロファイルに項目があるときだけ作る（値を 0 にするとそのレイヤーごと消える点に注意）
     if(p.crackGain){
       const crack=c.createBufferSource(),hp=c.createBiquadFilter(),cenv=c.createGain();
       crack.buffer=buffers.white;hp.type='highpass';hp.frequency.value=2500;
@@ -595,7 +599,7 @@
     const src=c.createBufferSource(),bp=c.createBiquadFilter(),breath=c.createGain();
     src.buffer=buffers.white;src.loop=true;bp.type='bandpass';bp.Q.value=p.q;
     bp.frequency.setValueAtTime(p.f0,t);bp.frequency.exponentialRampToValueAtTime(p.f1,t+p.dur);
-    breath.gain.value=p.noiseMix*2.5; // Q=14 のバンドパスで落ちる分を補う
+    breath.gain.value=p.noiseMix*p.breathGain; // 補正係数は whistleProfile.breathGain
     src.connect(bp);bp.connect(breath);breath.connect(env);
     nodes.push(env,osc,tone,lfo,depth,src,bp,breath);
     osc.start(t);lfo.start(t);src.start(t);osc.stop(end);lfo.stop(end);src.stop(end);
@@ -704,8 +708,11 @@
   function setQuiet(value){quiet=value;document.body.classList.toggle('quiet',value);document.querySelector('.top').inert=value;document.querySelector('.bottom').inert=value;if(value)$('restore').focus({preventScroll:true});else $('hide').focus({preventScroll:true});}
   function render(){makeDrawData();renderer.render();}
   function step(dt){simTime+=dt;director(dt);pumpUrlText();pumpTextQueue();updatePhysics(dt);}
+  // step() 内の例外で描画ループが永久停止しないようにする（frame は末尾で次の rAF を予約する構造のため）。最初の数回だけ記録する
+  let stepFailures=0;
+  function safeStep(dt){try{step(dt);}catch(err){if(stepFailures++<3)console.error('HANABI: step failed',err);}}
   function frame(stamp){raf=0;if(paused||document.hidden)return;const dt=lastStamp?clamp((stamp-lastStamp)/1000,0,.1):1/60;lastStamp=stamp;accumulator+=dt;
-    while(accumulator>=1/60){step(1/60);accumulator-=1/60;}updateCamera(dt);render();raf=requestAnimationFrame(frame);
+    while(accumulator>=1/60){safeStep(1/60);accumulator-=1/60;}updateCamera(dt);render();raf=requestAnimationFrame(frame);
   }
   function resumeLoop(){lastStamp=0;accumulator=0;if(!raf&&!paused&&!document.hidden)raf=requestAnimationFrame(frame);}
   function tap(x,y){
@@ -724,10 +731,11 @@
     input.addEventListener('compositionend',()=>{composing=false;});
     input.addEventListener('keydown',e=>{
       // 日本語変換の確定 Enter では打ち上げない
-      if(e.key==='Enter'&&(e.isComposing||e.keyCode===229||composing)){e.preventDefault();return;}
-      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}
+      if(e.key==='Enter'&&(e.isComposing||e.keyCode===229||composing))e.preventDefault();
     });
-    form.addEventListener('submit',e=>{e.preventDefault();if(composing)return;if(paused)setPaused(false);if(launchText(input.value))close();});
+    // Escape はフォーム内のどこにフォーカスがあっても閉じる。.quiet 解除の document ハンドラーには渡さない
+    form.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}});
+    form.addEventListener('submit',e=>{e.preventDefault();if(composing)return;if(launchText(input.value)){if(paused)setPaused(false);close();}});
     $('launcher-close').addEventListener('click',close);
     const isTyping=el=>!!el&&(el.isContentEditable||el.tagName==='TEXTAREA'||(el.tagName==='INPUT'&&!['range','checkbox','radio','button'].includes(el.type)));
     document.addEventListener('keydown',e=>{

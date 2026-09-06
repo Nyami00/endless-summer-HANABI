@@ -87,6 +87,8 @@ test('whistleProfile: small shells whistle higher, pitch rises, gap before boom'
   assert.ok(big.noiseMix <= 1 && small.noiseMix >= 0);
   assert.ok(big.gain > small.gain);
   assert.equal(big.q, 14);
+  assert.equal(big.breathGain, 2.5);
+  assert.ok(allPositiveFinite(big) && allPositiveFinite(small));
 });
 
 test('whistleProfile floors duration at 0.6s', () => {
@@ -108,10 +110,13 @@ test('whistleArbiter: replace the weakest when incoming is >= 0.15 stronger', ()
   assert.deepEqual(whistleArbiter(active, {power: 0.9}), {action: 'replace', index: 1});
 });
 
-test('whistleArbiter: priority always starts; max is honoured', () => {
+test('whistleArbiter: priority starts below 2*max, replaces the weakest at the ceiling; max is honoured', () => {
   const active = [{power: 0.9}, {power: 0.7}, {power: 1.0}];
   assert.deepEqual(whistleArbiter(active, {power: 0.5, priority: true}), {action: 'start'});
+  const six = [{power: 0.9}, {power: 0.7}, {power: 1.0}, {power: 0.8}, {power: 0.6}, {power: 0.95}];
+  assert.deepEqual(whistleArbiter(six, {power: 0.5, priority: true}), {action: 'replace', index: 4});
   assert.deepEqual(whistleArbiter([{power: 1}], {power: 0.5}, 1), {action: 'skip'});
+  assert.deepEqual(whistleArbiter([{power: 1}, {power: 1}], {power: 0.5, priority: true}, 1), {action: 'replace', index: 0});
 });
 
 test('sanitizeText strips ASCII and full-width whitespace', () => {
@@ -159,6 +164,15 @@ test('textLayout: three characters fit landscape without shrinking', () => {
   const {rows, shells} = textLayout(['は', 'な', 'び'], {halfWidth: 330});
   assert.equal(rows, 1);
   assert.equal(shells[0].R, 85);
+  const extent = Math.max(...shells.map(s => Math.abs(s.x))) + shells[0].R;
+  assert.ok(extent <= 330);
+});
+
+test('textLayout: four characters stay on one row in landscape', () => {
+  const {rows, shells} = textLayout(['は', 'な', 'び', 'よ'], {halfWidth: 330});
+  assert.equal(rows, 1);
+  assert.equal(shells[0].R, 75);
+  assert.ok(near(shells[0].x, -shells[3].x));
   const extent = Math.max(...shells.map(s => Math.abs(s.x))) + shells[0].R;
   assert.ok(extent <= 330);
 });
@@ -217,4 +231,8 @@ test('pickStep grows on too many points, shrinks on too few, within 2..6', () =>
   assert.equal(pickStep(100, 3), 3);
   assert.equal(pickStep(400, 6), 6);
   assert.equal(pickStep(10, 2), 2);
+  assert.equal(pickStep(320, 3), 3);
+  assert.equal(pickStep(321, 3), 4);
+  assert.equal(pickStep(40, 3), 3);
+  assert.equal(pickStep(39, 3), 2);
 });
