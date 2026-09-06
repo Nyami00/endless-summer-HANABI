@@ -16,7 +16,7 @@
 - 既存の見た目・操作・演出スコア（`score(...)` 群）・玉の物理は変えない。追加のみ。表の操作パネル（`.panel`）と `.hint` の文言には何も増やさない
 - `index.html` は UTF-8（BOM なし）、改行 LF（`.gitattributes` で固定済み）。既存コードは 1 行に複数文を詰める密なスタイルだが、追加コードは読みやすさ優先で改行してよい（ただし既存行のスタイルを一括整形しない）
 - リポジトリ `A:\HANABI`、作業ブランチ `feat/sound-and-text-fireworks`。各タスクの最後にコミットする。コミットメッセージは英語のコンベンショナルコミット形式で、末尾に `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` を付ける
-- テストコマンドは常に `node --test tests/`（`A:\HANABI` で実行）。全タスク終了時点で全テストが通ること
+- テストコマンドは常に `node --test`（`A:\HANABI` で実行）。全タスク終了時点で全テストが通ること
 - サイズ値 `sizeOf(power) = clamp((power - 0.5) / 0.75, 0, 1)`、距離係数 `distFactor(d) = clamp(1050 / d, 0.35, 1.25)`。音のパラメータはすべて仕様 1.1 の表の値を使う（初期値。聴感調整は izawa が後で行う）
 - 文字花火の上限は 6 文字、ヒューの同時発音は最大 3 本、文字玉は「同時 16 発」を 24 まで、星数上限を +900 までバイパスする
 - 日本語入力の変換確定 Enter で文字花火が打ち上がってはならない（`isComposing` / `keyCode 229` / composition イベントの三重防御）
@@ -49,7 +49,7 @@
 
 **Files:**
 - Modify: `index.html`（`const PALETTES=...;` の直後、`let surface=...` の直前にブロックを挿入）
-- Create: `tests/test_pure_logic.mjs`
+- Create: `tests/pure-logic.test.mjs`
 
 **Interfaces:**
 - Produces: `PURE = {sizeOf, distFactor, burstProfile, smallProfile, liftProfile, whistleProfile, whistleArbiter, sanitizeText, textLayout, normalizePoints, pickStep}`（後続タスクは IIFE 内で `const {sizeOf,...}=PURE;` と分割代入して使う）
@@ -67,7 +67,7 @@
 
 - [ ] **Step 1: テストファイルを書く（失敗するテスト）**
 
-`tests/test_pure_logic.mjs`:
+`tests/pure-logic.test.mjs`:
 
 ```js
 import {test} from 'node:test';
@@ -88,7 +88,9 @@ test('index.html script parses', () => {
 
 const block = html.match(/\/\/ PURE_LOGIC_START([\s\S]*?)\/\/ PURE_LOGIC_END/);
 assert.ok(block, 'PURE_LOGIC block not found in index.html');
-const PURE = vm.runInNewContext(block[1] + '\nPURE;', {}, {filename: 'pure-logic.js'});
+// runInThisContext + arrow wrapper: objects created in a separate vm realm fail strict deepEqual
+// (different Object.prototype), and the wrapper keeps PURE out of this module's globals.
+const PURE = vm.runInThisContext('(() => {' + block[1] + '\nreturn PURE;})()', {filename: 'pure-logic.js'});
 const {sizeOf, distFactor, burstProfile, smallProfile, liftProfile, whistleProfile, whistleArbiter,
   sanitizeText, textLayout, normalizePoints, pickStep} = PURE;
 
@@ -292,7 +294,7 @@ test('pickStep grows on too many points, shrinks on too few, within 2..6', () =>
 
 - [ ] **Step 2: テストを実行して失敗を確認する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: `PURE_LOGIC block not found in index.html` で失敗（script parses テストは通る）
 
 - [ ] **Step 3: `index.html` にブロックを挿入する**
@@ -301,7 +303,7 @@ Expected: `PURE_LOGIC block not found in index.html` で失敗（script parses �
 
 ```js
   // PURE_LOGIC_START
-  // DOM・Web Audio に依存しない純粋ロジック。tests/test_pure_logic.mjs が node:vm で抽出して検証する。
+  // DOM・Web Audio に依存しない純粋ロジック。tests/pure-logic.test.mjs が node:vm で抽出して検証する。
   // 音の定数はすべてここに集約する（聴感調整はこの表だけを書き換える）。
   const PURE=(()=>{
     'use strict';
@@ -387,7 +389,7 @@ Expected: `PURE_LOGIC block not found in index.html` で失敗（script parses �
 
 - [ ] **Step 4: テストを実行して全件通ることを確認する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: すべて `ok`、`# fail 0`
 
 - [ ] **Step 5: ブラウザで壊れていないことを確認する**
@@ -397,7 +399,7 @@ Expected: すべて `ok`、`# fail 0`
 - [ ] **Step 6: コミット**
 
 ```bash
-git add index.html tests/test_pure_logic.mjs
+git add index.html tests/pure-logic.test.mjs
 git commit -m "feat: add pure-logic block for sound profiles and text layout with node tests
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -522,7 +524,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 4: テストを実行する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: 全件 `ok`（`script parses` が構文の破損を検出する）
 
 - [ ] **Step 5: ブラウザ確認（Fable のチェックポイント）**
@@ -718,7 +720,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 7: テストを実行する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: 全件 `ok`
 
 - [ ] **Step 8: ブラウザ確認（Fable のチェックポイント）**
@@ -859,7 +861,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 8: テストを実行する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: 全件 `ok`
 
 - [ ] **Step 9: ブラウザ確認（Fable のチェックポイント）**
@@ -997,7 +999,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ## 開発
 
-- テスト: `node --test tests/`（Node 22 以上。npm パッケージは使いません）
+- テスト: `node --test`（Node 22 以上。npm パッケージは使いません）
 - 自己診断: `index.html?selftest=1` を開くと音と文字の生成を検査して結果を表示します
 - デバッグ: `index.html?debug=1` で `window.HANABI` に内部関数が公開されます
 
@@ -1010,7 +1012,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 7: テストを実行する**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: 全件 `ok`
 
 - [ ] **Step 8: ブラウザ確認（Fable のチェックポイント）**
@@ -1041,7 +1043,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 1: 全テスト**
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: `# fail 0`
 
 - [ ] **Step 2: ブラウザ総合確認**

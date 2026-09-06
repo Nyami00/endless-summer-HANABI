@@ -188,7 +188,7 @@
 
 - `?debug=1`: `window.HANABI = Object.freeze({launchText, sampleGlyph, sanitizeText, textLayout, burstProfile, whistleProfile, whistleArbiter, audio, state})`。`state()` は `{stars, shells, soundEvents, whistles}` の件数を返す。ブラウザ上での検証に使う
 - `?selftest=1`: 1.4 の自己診断を起動時に実行する
-- Node テスト `tests/test_pure_logic.mjs`: `index.html` から `// PURE_LOGIC_START` 〜 `// PURE_LOGIC_END` を正規表現で抜き出し、`node:vm` で評価して `node:test` + `node:assert/strict` で検証する。npm パッケージは追加しない。実行は `node --test tests/`
+- Node テスト `tests/pure-logic.test.mjs`: `index.html` から `// PURE_LOGIC_START` 〜 `// PURE_LOGIC_END` を正規表現で抜き出し、`node:vm` で評価して `node:test` + `node:assert/strict` で検証する。npm パッケージは追加しない。実行は `node --test`
   - `sizeOf` の端点とクランプ
   - `burstProfile` / `liftProfile` / `whistleProfile` の単調性（大玉ほど低音が低く減衰が長い、笛が低い、など）と有限性
   - `whistleArbiter` の 4 分岐
@@ -204,7 +204,7 @@
 ```
 A:\HANABI\
 ├ index.html                      ← 納品物（単一ファイル）
-├ tests\test_pure_logic.mjs       ← Node 組込テスト（開発用）
+├ tests\pure-logic.test.mjs       ← Node 組込テスト（開発用。`node --test` の既定パターンで発見される）
 ├ docs\superpowers\specs\...      ← 本仕様
 ├ docs\superpowers\plans\...      ← 実装計画
 ├ README.md                       ← 操作説明・公開手順（裏機能は <details> 内に軽く記載）
