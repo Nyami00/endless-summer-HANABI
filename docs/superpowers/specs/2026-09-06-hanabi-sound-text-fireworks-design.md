@@ -38,11 +38,12 @@
 | 項目 | 値 | 意味 |
 |---|---|---|
 | gain | `power^1.25 * dist` | 全体音量 |
-| crackGain | `mix(0.15, 0.55, s)` | 先頭 15ms の「バン」（ハイパス 2500Hz のノイズ）。gain に乗算 |
-| bodyHz / bodyDecay / bodyGain | `mix(170, 105, s)` / `mix(0.18, 0.30, s)` / `0.30` | 中低域の「ボディ音」（正弦波、減衰中に周波数が半分へ下がる）。スマホスピーカーで大きさの差を伝えるための成分 |
-| bassStart / bassEnd / bassDecay / bassGain | `mix(72, 36, s)` / `mix(32, 20, s)` / `mix(0.4, 1.1, s)` / `0.66` | 既存の低音正弦波を大きさ連動に |
-| noiseCutoffStart / noiseCutoffEnd / noiseDecay | `mix(1900, 850, s) * dist` / `90` / `mix(0.9, 2.8, s)` | 既存のブラウンノイズ成分 |
-| reverbSend | `mix(0.7, 1.3, s)` | リバーブへの送り量（既存 wet 0.24 に乗算） |
+| crackGain / crackHz | `mix(0.08, 0.30, s)` / `1800` | 先頭 15ms の「バン」（ハイパス crackHz のノイズ）。gain に乗算。2026-09-06 聴感調整（「もっと低く重く」）で控えめにした |
+| bodyHz / bodyDecay / bodyGain | `mix(140, 85, s)` / `mix(0.25, 0.45, s)` / `0.55` | 中低域の「ボディ音」（正弦波、減衰中に周波数が半分へ下がる）。重さを出す主成分。スマホスピーカーでも大きさの差が伝わる |
+| bassStart / bassEnd / bassDecay / bassGain | `mix(64, 34, s)` / `mix(28, 18, s)` / `mix(0.6, 1.6, s)` / `1.0` | 低音正弦波。大玉ほど低く長い |
+| subDelay | `mix(0.01, 0.03, s)` | ボディと低音の開始をクラックよりわずかに遅らせ「バ・ドーン」の重さを出す |
+| noiseCutoffStart / noiseCutoffEnd / noiseDecay | `mix(1200, 520, s) * dist` / `90` / `mix(1.1, 3.2, s)` | ブラウンノイズ成分。帯域を下げ、尾を少し長く |
+| reverbSend | `mix(0.8, 1.5, s)` | リバーブへの送り量（既存 wet 0.24 に乗算） |
 
 `smallProfile(power, d)` → 千輪の子玉・パチパチ用。既存の挙動を踏襲（ノイズ 2200→750Hz、減衰 0.55s、gain `power * dist`、低音・ボディ・クラックなし）
 

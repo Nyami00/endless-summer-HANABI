@@ -147,15 +147,17 @@
     // 0 = 3号玉相当, 1 = 尺玉相当
     const sizeOf=power=>clamp((power-.5)/.75,0,1);
     const distFactor=d=>clamp(1050/d,.35,1.25);
+    // 開花音「ドン」: 低く重く。クラックは控えめ、ボディと低音を厚く長く、低音成分は subDelay ぶん遅らせて「バ・ドーン」の重さを出す
     function burstProfile(power,d){
       const s=sizeOf(power),dist=distFactor(d);
       return {
         gain:Math.pow(power,1.25)*dist,
-        crackGain:mix(.15,.55,s),
-        bodyHz:mix(170,105,s),bodyDecay:mix(.18,.30,s),bodyGain:.30,
-        bassStart:mix(72,36,s),bassEnd:mix(32,20,s),bassDecay:mix(.4,1.1,s),bassGain:.66,
-        noiseCutoffStart:mix(1900,850,s)*dist,noiseCutoffEnd:90,noiseDecay:mix(.9,2.8,s),
-        reverbSend:mix(.7,1.3,s)
+        crackGain:mix(.08,.30,s),crackHz:1800,
+        bodyHz:mix(140,85,s),bodyDecay:mix(.25,.45,s),bodyGain:.55,
+        bassStart:mix(64,34,s),bassEnd:mix(28,18,s),bassDecay:mix(.6,1.6,s),bassGain:1.0,
+        subDelay:mix(.01,.03,s),
+        noiseCutoffStart:mix(1200,520,s)*dist,noiseCutoffEnd:90,noiseDecay:mix(1.1,3.2,s),
+        reverbSend:mix(.8,1.5,s)
       };
     }
     function smallProfile(power,d){
@@ -538,7 +540,7 @@
 
   // ---- 音声グラフの部品。ライブ再生（AudioContext）と自己診断（OfflineAudioContext）で共用する ----
   function prepareBuffers(c){
-    const sr=c.sampleRate,brown=c.createBuffer(1,Math.floor(sr*3),sr),white=c.createBuffer(1,Math.floor(sr*3),sr);
+    const sr=c.sampleRate,brown=c.createBuffer(1,Math.floor(sr*4),sr),white=c.createBuffer(1,Math.floor(sr*3),sr);
     const b=brown.getChannelData(0);let acc=0;for(let i=0;i<b.length;i++){acc=(acc+(Math.random()*2-1)*.09)/1.025;b[i]=acc*2.7;}
     const w=white.getChannelData(0);for(let i=0;i<w.length;i++)w[i]=Math.random()*2-1;
     return {brown,white};
@@ -548,7 +550,7 @@
     if(kind==='small'||kind==='crackle')return smallProfile(power,d);
     return burstProfile(power,d);
   }
-  // 打楽器系の 1 発。クラック(白ノイズ HPF) → ボディ(正弦波) → 低音(正弦波) → 本体(ブラウンノイズ LPF) を同時刻 t に開始する。
+  // 打楽器系の 1 発。クラック(白ノイズ HPF) → ボディ(正弦波) → 低音(正弦波) → 本体(ブラウンノイズ LPF) を t に開始する（ボディと低音は p.subDelay ぶん遅らせる）。
   // 低音とボディは bus.sub（master 直結）、それ以外は bus.dry（パン → master + reverb 送り）へ。
   function buildBurst(c,bus,t,p,buffers){
     const nodes=[],voice={onended:null};
@@ -562,24 +564,25 @@
     env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain*.82,t+.008);env.gain.exponentialRampToValueAtTime(.001,t+p.noiseDecay);
     link(src,lp,env,bus.dry);
     const end=t+p.noiseDecay+.05;src.start(t);scheduleStop(src,end);
+    const tb=t+(p.subDelay||0); // ボディと低音はわずかに遅らせて「バ・ドーン」の重さを出す（lift/small は 0）
     // 各レイヤーはプロファイルに項目があるときだけ作る（値を 0 にするとそのレイヤーごと消える点に注意）
     if(p.crackGain){
       const crack=c.createBufferSource(),hp=c.createBiquadFilter(),cenv=c.createGain();
-      crack.buffer=buffers.white;hp.type='highpass';hp.frequency.value=2500;
+      crack.buffer=buffers.white;hp.type='highpass';hp.frequency.value=p.crackHz;
       cenv.gain.setValueAtTime(0,t);cenv.gain.linearRampToValueAtTime(p.gain*p.crackGain,t+.002);cenv.gain.exponentialRampToValueAtTime(.001,t+.015);
       link(crack,hp,cenv,bus.dry);crack.start(t);scheduleStop(crack,t+.03);
     }
     if(p.bodyHz){
       const body=c.createOscillator(),benv=c.createGain();
-      body.type='sine';body.frequency.setValueAtTime(p.bodyHz,t);body.frequency.exponentialRampToValueAtTime(p.bodyHz*.5,t+p.bodyDecay);
-      benv.gain.setValueAtTime(0,t);benv.gain.linearRampToValueAtTime(p.gain*p.bodyGain,t+.006);benv.gain.exponentialRampToValueAtTime(.001,t+p.bodyDecay);
-      link(body,benv,bus.sub);body.start(t);scheduleStop(body,t+p.bodyDecay+.02);
+      body.type='sine';body.frequency.setValueAtTime(p.bodyHz,tb);body.frequency.exponentialRampToValueAtTime(p.bodyHz*.5,tb+p.bodyDecay);
+      benv.gain.setValueAtTime(0,tb);benv.gain.linearRampToValueAtTime(p.gain*p.bodyGain,tb+.01);benv.gain.exponentialRampToValueAtTime(.001,tb+p.bodyDecay);
+      link(body,benv,bus.sub);body.start(tb);scheduleStop(body,tb+p.bodyDecay+.02);
     }
     if(p.bassStart){
       const bass=c.createOscillator(),genv=c.createGain();
-      bass.type='sine';bass.frequency.setValueAtTime(p.bassStart,t);bass.frequency.exponentialRampToValueAtTime(p.bassEnd,t+p.bassDecay);
-      genv.gain.setValueAtTime(0,t);genv.gain.linearRampToValueAtTime(p.gain*p.bassGain,t+.013);genv.gain.exponentialRampToValueAtTime(.001,t+p.bassDecay+.2);
-      link(bass,genv,bus.sub);bass.start(t);scheduleStop(bass,t+p.bassDecay+.25);
+      bass.type='sine';bass.frequency.setValueAtTime(p.bassStart,tb);bass.frequency.exponentialRampToValueAtTime(p.bassEnd,tb+p.bassDecay);
+      genv.gain.setValueAtTime(0,tb);genv.gain.linearRampToValueAtTime(p.gain*p.bassGain,tb+.02);genv.gain.exponentialRampToValueAtTime(.001,tb+p.bassDecay+.2);
+      link(bass,genv,bus.sub);bass.start(tb);scheduleStop(bass,tb+p.bassDecay+.25);
     }
     // 後始末は最後に止まるソースの onended に付ける（lift は低音がノイズ本体より長く鳴るため src では早すぎる）
     lastSource.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};

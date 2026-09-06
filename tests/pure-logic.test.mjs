@@ -52,6 +52,9 @@ test('burstProfile: bigger shells are deeper, longer, louder', () => {
   assert.ok(big.reverbSend > small.reverbSend);
   assert.ok(big.gain > small.gain);
   assert.equal(big.noiseCutoffEnd, 90);
+  assert.ok(big.subDelay > small.subDelay);
+  assert.equal(big.crackHz, 1800);
+  assert.ok(big.bodyGain >= 0.5 && big.bassGain >= 1);
 });
 
 test('burstProfile gain scales with distance factor', () => {
