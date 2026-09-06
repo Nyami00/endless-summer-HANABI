@@ -396,7 +396,9 @@
     if(truncated)toast(`文字花火は6文字まで。「${chars.join('')}」を打ち上げます。`);
     return true;
   }
-  function pumpTextQueue(){while(textQueue.length&&textQueue[0].at<=simTime){const e=textQueue.shift();launch(e.type,e.x,e.y,0,e.power,e.palette,e.extra);}}
+  // 期限が来た予約をすべて打ち上げる。先頭以外も見るので、続けて入力された文字列（予約が時刻順に並ばない）でも順番どおりに上がる。
+  // 玉の上限で launch が false を返した予約は取り除かず、次フレーム以降に持ち越す（文字が黙って欠けない）。
+  function pumpTextQueue(){for(let i=0;i<textQueue.length;){const e=textQueue[i];if(e.at<=simTime&&launch(e.type,e.x,e.y,0,e.power,e.palette,e.extra))textQueue.splice(i,1);else i++;}}
   function openShell(x,y,z,type='yae',power=1,palette=pick(PALETTES),mini=false,extra={}){
     const quality=W<600?.78:1,spin=rand(0,TAU),baseSpeed=110*power;
     flash(x,y,z,palette[0],mini?.18:power);if(!mini){queueSound(x,y,z,power,type==='crackle'?'crackle':'burst');puff(x,y,z,70*power);for(let j=0;j<6;j++){const d=direction(j,6,spin);puff(x+d[0]*25,y+d[1]*25,z+d[2]*25,rand(28,55)*power);}}
@@ -438,12 +440,13 @@
     }
   }
   function launch(type='yae',x=0,y=400,z=0,power=1,palette=pick(PALETTES),extra={}){
-    if(shells.length>=(extra.glyph?24:16))return;
+    if(shells.length>=(extra.glyph?24:16))return false;
     const stations=[-300,-150,0,150,300],start=stations.reduce((a,b)=>Math.abs(b-x)<Math.abs(a-x)?b:a,0),duration=4.55+y*.0015,drag=.35,F=(1-Math.exp(-drag*duration))/drag;
     shells.push({x:start,y:3,z,startX:start,startY:3,startZ:z,vx:(x-start)/F,vy:(y-3+9.81/drag*(duration-F))/F,vz:0,drag,duration,age:0,type,power,palette,tx:x,ty:y,tz:z,emit:0,hist:[],extra});
     puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);
     queueSound(start,3,z,power,'lift');
     queueSound(start,3,z,power,'whistle',{duration,priority:!!extra.priority});
+    return true;
   }
   function updatePhysics(dt){
     for(let i=shells.length-1;i>=0;i--){const s=shells[i];s.age+=dt;const t=Math.min(s.age,s.duration),F=(1-Math.exp(-s.drag*t))/s.drag;s.x=s.startX+s.vx*F;s.y=s.startY+s.vy*F-9.81/s.drag*(t-F);s.z=s.startZ+s.vz*F;s.emit+=dt;
