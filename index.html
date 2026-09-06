@@ -402,7 +402,7 @@
     if(shells.length>=16)return;
     const stations=[-300,-150,0,150,300],start=stations.reduce((a,b)=>Math.abs(b-x)<Math.abs(a-x)?b:a,0),duration=4.55+y*.0015,drag=.35,F=(1-Math.exp(-drag*duration))/drag;
     shells.push({x:start,y:3,z,startX:start,startY:3,startZ:z,vx:(x-start)/F,vy:(y-3+9.81/drag*(duration-F))/F,vz:0,drag,duration,age:0,type,power,palette,tx:x,ty:y,tz:z,emit:0,hist:[]});
-    puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);queueSound(start,3,z,.32,'lift');
+    puff(start,3,z,12,7);flash(start,3,z,C.gold,.18);queueSound(start,3,z,power,'lift');
   }
   function updatePhysics(dt){
     for(let i=shells.length-1;i>=0;i--){const s=shells[i];s.age+=dt;const t=Math.min(s.age,s.duration),F=(1-Math.exp(-s.drag*t))/s.drag;s.x=s.startX+s.vx*F;s.y=s.startY+s.vy*F-9.81/s.drag*(t-F);s.z=s.startZ+s.vz*F;s.emit+=dt;
@@ -472,8 +472,53 @@
     $('finale').disabled=true;$('finale').querySelector('span').textContent='打ち上げ中';setAct('特別演出','夜空いっぱいの錦');
   }
 
+  // ---- 音声グラフの部品。ライブ再生（AudioContext）と自己診断（OfflineAudioContext）で共用する ----
+  function prepareBuffers(c){
+    const sr=c.sampleRate,brown=c.createBuffer(1,Math.floor(sr*2.5),sr),white=c.createBuffer(1,Math.floor(sr*1),sr);
+    const b=brown.getChannelData(0);let acc=0;for(let i=0;i<b.length;i++){acc=(acc+(Math.random()*2-1)*.09)/1.025;b[i]=acc*2.7;}
+    const w=white.getChannelData(0);for(let i=0;i<w.length;i++)w[i]=Math.random()*2-1;
+    return {brown,white};
+  }
+  function profileFor(kind,power,d){
+    if(kind==='lift')return liftProfile(power,d);
+    if(kind==='small'||kind==='crackle')return smallProfile(power,d);
+    return burstProfile(power,d);
+  }
+  // 打楽器系の 1 発。クラック(白ノイズ HPF) → ボディ(正弦波) → 低音(正弦波) → 本体(ブラウンノイズ LPF) を同時刻 t に開始する。
+  // 低音とボディは bus.sub（master 直結）、それ以外は bus.dry（パン → master + reverb 送り）へ。
+  function buildBurst(c,bus,t,p,buffers){
+    const nodes=[],voice={onended:null};
+    const link=(...chain)=>{for(let i=0;i<chain.length-1;i++)chain[i].connect(chain[i+1]);nodes.push(...chain.slice(0,-1));};
+    const src=c.createBufferSource(),lp=c.createBiquadFilter(),env=c.createGain();
+    src.buffer=buffers.brown;src.loop=true;
+    lp.type='lowpass';lp.frequency.setValueAtTime(p.noiseCutoffStart,t);lp.frequency.exponentialRampToValueAtTime(p.noiseCutoffEnd,t+p.noiseDecay);
+    env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(p.gain*.82,t+.008);env.gain.exponentialRampToValueAtTime(.001,t+p.noiseDecay);
+    link(src,lp,env,bus.dry);
+    const end=t+p.noiseDecay+.05;src.start(t);src.stop(end);
+    if(p.crackGain){
+      const crack=c.createBufferSource(),hp=c.createBiquadFilter(),cenv=c.createGain();
+      crack.buffer=buffers.white;hp.type='highpass';hp.frequency.value=2500;
+      cenv.gain.setValueAtTime(0,t);cenv.gain.linearRampToValueAtTime(p.gain*p.crackGain,t+.002);cenv.gain.exponentialRampToValueAtTime(.001,t+.015);
+      link(crack,hp,cenv,bus.dry);crack.start(t);crack.stop(t+.03);
+    }
+    if(p.bodyHz){
+      const body=c.createOscillator(),benv=c.createGain();
+      body.type='sine';body.frequency.setValueAtTime(p.bodyHz,t);body.frequency.exponentialRampToValueAtTime(p.bodyHz*.5,t+p.bodyDecay);
+      benv.gain.setValueAtTime(0,t);benv.gain.linearRampToValueAtTime(p.gain*p.bodyGain,t+.006);benv.gain.exponentialRampToValueAtTime(.001,t+p.bodyDecay);
+      link(body,benv,bus.sub);body.start(t);body.stop(t+p.bodyDecay+.02);
+    }
+    if(p.bassStart){
+      const bass=c.createOscillator(),genv=c.createGain();
+      bass.type='sine';bass.frequency.setValueAtTime(p.bassStart,t);bass.frequency.exponentialRampToValueAtTime(p.bassEnd,t+p.bassDecay);
+      genv.gain.setValueAtTime(0,t);genv.gain.linearRampToValueAtTime(p.gain*p.bassGain,t+.013);genv.gain.exponentialRampToValueAtTime(.001,t+p.bassDecay+.2);
+      link(bass,genv,bus.sub);bass.start(t);bass.stop(t+p.bassDecay+.25);
+    }
+    src.onended=()=>{nodes.forEach(n=>{try{n.disconnect();}catch{}});if(voice.onended)voice.onended();};
+    return voice;
+  }
+
   class Soundscape{
-    constructor(){this.ctx=null;this.last=0;this.active=0;}
+    constructor(){this.ctx=null;this.last=0;this.active=0;this.buffers=null;}
     async init(){
       const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw new Error('Audio unavailable');
       if(!this.ctx){const c=this.ctx=new AC(),sr=c.sampleRate;
@@ -481,22 +526,31 @@
         this.reverb=c.createConvolver();const impulse=c.createBuffer(2,Math.floor(sr*3.2),sr);
         for(let channel=0;channel<2;channel++){const data=impulse.getChannelData(channel);for(let i=0;i<data.length;i++){const t=i/sr;data[i]=(Math.random()*2-1)*Math.exp(-t*2.4)*.2*(t>.09?1:0);}}
         this.reverb.buffer=impulse;this.wet=c.createGain();this.wet.gain.value=.24;this.reverb.connect(this.wet);this.wet.connect(this.master);
-        this.noise=c.createBuffer(1,Math.floor(sr*2.5),sr);const n=this.noise.getChannelData(0);let brown=0;for(let i=0;i<n.length;i++){brown=(brown+(Math.random()*2-1)*.09)/1.025;n[i]=brown*2.7;}
+        this.buffers=prepareBuffers(c);
       }
       await this.ctx.resume();
     }
+    // 音源位置に応じたパン付きの出力先。dry は master と reverb（送り量 reverbSend）へ、sub は master 直結。
+    bus(e,reverbSend=1){
+      const c=this.ctx,dry=c.createStereoPanner?c.createStereoPanner():c.createGain(),send=c.createGain();
+      if(dry.pan){const p=project(e.x,e.y,e.z);dry.pan.value=clamp(p?(p.x/W-.5)*1.6:0,-.9,.9);}
+      send.gain.value=reverbSend;dry.connect(this.master);dry.connect(send);send.connect(this.reverb);
+      return {dry,sub:this.master,release(){try{dry.disconnect();send.disconnect();}catch{}}};
+    }
     play(e){
-      const c=this.ctx;if(!c||c.state!=='running'||this.active>18)return;const now=c.currentTime;
-      if(now-this.last<.035)return;this.last=now;this.active++;
-      const source=c.createBufferSource(),filter=c.createBiquadFilter(),envelope=c.createGain();source.buffer=this.noise;
-      const small=e.kind==='small'||e.kind==='crackle',lift=e.kind==='lift',decay=lift?.38:small?.55:1.8;
-      const distance=clamp(1050/e.d,.35,1.25),power=e.power*distance*(lift?.48:1),t=now+.005;
-      filter.type='lowpass';filter.frequency.setValueAtTime(lift?380:small?2200:1300*distance,t);filter.frequency.exponentialRampToValueAtTime(small?750:90,t+decay);
-      envelope.gain.setValueAtTime(0,t);envelope.gain.linearRampToValueAtTime(power*.82,t+.008);envelope.gain.exponentialRampToValueAtTime(.001,t+decay);
-      source.connect(filter);filter.connect(envelope);
-      let pan=null;if(c.createStereoPanner){pan=c.createStereoPanner();const p=project(e.x,e.y,e.z);pan.pan.value=clamp(p?(p.x/W-.5)*1.6:0,-.9,.9);envelope.connect(pan);pan.connect(this.master);pan.connect(this.reverb);}else {envelope.connect(this.master);envelope.connect(this.reverb);}
-      source.start(t);source.stop(t+decay+.03);source.onended=()=>{this.active--;source.disconnect();filter.disconnect();envelope.disconnect();if(pan)pan.disconnect();};
-      if(!small){const bass=c.createOscillator(),gain=c.createGain();bass.type='sine';bass.frequency.setValueAtTime(lift?66:48,t);bass.frequency.exponentialRampToValueAtTime(25,t+.45);gain.gain.setValueAtTime(0,t);gain.gain.linearRampToValueAtTime(power*.66,t+.013);gain.gain.exponentialRampToValueAtTime(.001,t+.65);bass.connect(gain);gain.connect(this.master);bass.start(t);bass.stop(t+.7);bass.onended=()=>{bass.disconnect();gain.disconnect();};}
+      const c=this.ctx;if(!c||c.state!=='running')return;const now=c.currentTime,t=now+.005;
+      if(this.active>18||now-this.last<.035)return;this.last=now;this.active++;
+      const p=profileFor(e.kind,e.power,e.d),bus=this.bus(e,p.reverbSend);
+      const voice=buildBurst(c,bus,t,p,this.buffers);
+      voice.onended=()=>{this.active--;bus.release();};
+    }
+    // 自己診断用: 同じ builder で OfflineAudioContext に描画し、モノラルの波形を返す
+    async renderOffline(kind,power,duration=5.1,distance=1000){
+      const OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!OAC)throw new Error('OfflineAudioContext unavailable');
+      const sr=44100,c=new OAC(1,Math.ceil(sr*4),sr),buffers=prepareBuffers(c),master=c.createGain();master.connect(c.destination);
+      const bus={dry:master,sub:master,release(){}};
+      buildBurst(c,bus,.05,profileFor(kind,power,distance),buffers);
+      return (await c.startRendering()).getChannelData(0);
     }
     async mute(value){if(!this.ctx)return;if(value)await this.ctx.suspend();else if(soundOn)await this.ctx.resume();}
   }
