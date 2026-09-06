@@ -126,7 +126,7 @@
   const C={gold:[1,.53,.105],warm:[1,.77,.32],red:[1,.035,.065],blue:[.12,.29,1],aqua:[.045,.8,1],green:[.14,1,.32],violet:[.53,.11,1],pink:[1,.10,.43],silver:[.8,.9,1]};
   const PALETTES=[[C.red,C.aqua,C.warm],[C.blue,C.pink,C.silver],[C.green,C.violet,C.gold],[C.pink,C.blue,C.warm],[C.violet,C.green,C.silver]];
   // PURE_LOGIC_START
-  // DOM・Web Audio に依存しない純粋ロジック。tests/test_pure_logic.mjs が node:vm で抽出して検証する。
+  // DOM・Web Audio に依存しない純粋ロジック。tests/pure-logic.test.mjs が node:vm で抽出して検証する。
   // 音の定数はすべてここに集約する（聴感調整はこの表だけを書き換える）。
   const PURE=(()=>{
     'use strict';
