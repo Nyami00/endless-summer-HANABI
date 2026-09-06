@@ -973,6 +973,17 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 `updateCamera(10);setupInput();updatePause();` を `updateCamera(10);setupInput();setupLauncher();updatePause();` に。
 
+- [ ] **Step 4b: debug フックに決定的な時間送り `advance()` を追加する**
+
+検証環境によっては `requestAnimationFrame` が止まる（ブラウザペインが非表示のときなど）ため、`?debug=1` のフックからシミュレーションを決定的に進めて描画できるようにする。Task 4 が入れた `window.HANABI=Object.freeze({...})` の `state:` の直前に次の 1 行を追加する:
+
+```js
+    // 検証用: rAF が止まる環境でも決定的にシミュレーションを進めて描画する（seconds 秒ぶん 1/60 刻み）
+    advance:(seconds=1)=>{const n=Math.round(seconds*60);for(let i=0;i<n;i++)step(1/60);updateCamera(10);render();return simTime;},
+```
+
+`step` / `updateCamera` / `render` / `simTime` はいずれも IIFE 内の既存識別子。`state()` の戻り値は変えない。
+
 - [ ] **Step 5: Escape の優先順位を確認する**
 
 既存の `document.addEventListener('keydown',e=>{if(e.key==='Escape'&&quiet)setQuiet(false);});` は変更不要（入力欄の keydown で `stopPropagation` しているので、入力欄が開いているときは document まで届かない）。

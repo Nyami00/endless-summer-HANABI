@@ -186,7 +186,7 @@
 
 ## 3. 検証・開発用フック
 
-- `?debug=1`: `window.HANABI = Object.freeze({launchText, sampleGlyph, sanitizeText, textLayout, burstProfile, whistleProfile, whistleArbiter, audio, state})`。`state()` は `{stars, shells, soundEvents, whistles}` の件数を返す。ブラウザ上での検証に使う
+- `?debug=1`: `window.HANABI = Object.freeze({launchText, sampleGlyph, sanitizeText, textLayout, burstProfile, whistleProfile, whistleArbiter, audio, advance, state})`。`state()` は `{stars, shells, soundEvents, whistles, textQueue}` の件数を返す。`advance(seconds)` は 1/60 秒刻みでシミュレーションを決定的に進めて描画する（`requestAnimationFrame` が止まる検証環境向け）。ブラウザ上での検証に使う
 - `?selftest=1`: 1.4 の自己診断を起動時に実行する
 - Node テスト `tests/pure-logic.test.mjs`: `index.html` から `// PURE_LOGIC_START` 〜 `// PURE_LOGIC_END` を正規表現で抜き出し、`node:vm` で評価して `node:test` + `node:assert/strict` で検証する。npm パッケージは追加しない。実行は `node --test`
   - `sizeOf` の端点とクランプ
