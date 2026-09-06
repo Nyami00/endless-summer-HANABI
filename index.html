@@ -125,6 +125,87 @@
   const smooth=(a,b,x)=>{if(a===b)return x>=b?1:0;const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
   const C={gold:[1,.53,.105],warm:[1,.77,.32],red:[1,.035,.065],blue:[.12,.29,1],aqua:[.045,.8,1],green:[.14,1,.32],violet:[.53,.11,1],pink:[1,.10,.43],silver:[.8,.9,1]};
   const PALETTES=[[C.red,C.aqua,C.warm],[C.blue,C.pink,C.silver],[C.green,C.violet,C.gold],[C.pink,C.blue,C.warm],[C.violet,C.green,C.silver]];
+  // PURE_LOGIC_START
+  // DOM・Web Audio に依存しない純粋ロジック。tests/test_pure_logic.mjs が node:vm で抽出して検証する。
+  // 音の定数はすべてここに集約する（聴感調整はこの表だけを書き換える）。
+  const PURE=(()=>{
+    'use strict';
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),mix=(a,b,t)=>a+(b-a)*t;
+    // 0 = 3号玉相当, 1 = 尺玉相当
+    const sizeOf=power=>clamp((power-.5)/.75,0,1);
+    const distFactor=d=>clamp(1050/d,.35,1.25);
+    function burstProfile(power,d){
+      const s=sizeOf(power),dist=distFactor(d);
+      return {
+        gain:Math.pow(power,1.25)*dist,
+        crackGain:mix(.15,.55,s),
+        bodyHz:mix(170,105,s),bodyDecay:mix(.18,.30,s),bodyGain:.30,
+        bassStart:mix(72,36,s),bassEnd:mix(32,20,s),bassDecay:mix(.4,1.1,s),bassGain:.66,
+        noiseCutoffStart:mix(1900,850,s)*dist,noiseCutoffEnd:90,noiseDecay:mix(.9,2.8,s),
+        reverbSend:mix(.7,1.3,s)
+      };
+    }
+    function smallProfile(power,d){
+      return {gain:power*distFactor(d),noiseCutoffStart:2200,noiseCutoffEnd:750,noiseDecay:.55,reverbSend:1};
+    }
+    function liftProfile(power,d){
+      const s=sizeOf(power),dist=distFactor(d);
+      return {gain:.35*power*dist,noiseCutoffStart:380,noiseCutoffEnd:90,noiseDecay:.38,bassStart:mix(80,55,s),bassEnd:30,bassDecay:mix(.3,.5,s),bassGain:.66,reverbSend:1};
+    }
+    function whistleProfile(power,duration,d){
+      const s=sizeOf(power),dist=distFactor(d),f0=mix(1500,620,s),endGap=mix(.2,.35,s);
+      return {f0,f1:f0*Math.pow(2,mix(3,5,s)/12),endGap,dur:Math.max(.6,duration-endGap),attack:.12,release:.08,sustainEnd:.55,
+        noiseMix:mix(.35,.75,s),gain:mix(.09,.16,s)*dist,vibratoHz:5.5,vibratoDepth:mix(.004,.012,s),q:14,reverbSend:.5};
+    }
+    // 同時に鳴らす笛の裁定。active は鳴っている笛 [{power}], incoming は {power, priority}
+    function whistleArbiter(active,incoming,max=3){
+      if(incoming.priority)return {action:'start'};
+      if(active.length<max)return {action:'start'};
+      let index=0;for(let i=1;i<active.length;i++)if(active[i].power<active[index].power)index=i;
+      if(incoming.power-active[index].power>=.15)return {action:'replace',index};
+      return {action:'skip'};
+    }
+    const WHITESPACE=/[\s\u3000]+/g;
+    function sanitizeText(input,max=6){
+      const text=String(input??'').replace(WHITESPACE,'');
+      const all=(typeof Intl!=='undefined'&&Intl.Segmenter)
+        ?[...new Intl.Segmenter('ja',{granularity:'grapheme'}).segment(text)].map(g=>g.segment)
+        :Array.from(text);
+      return {chars:all.slice(0,max),truncated:all.length>max};
+    }
+    // R = 開花 1.5 秒後の文字半径。全体幅が 2*halfWidth を超えたら 4 文字以上は 2 段、それでも超えたら R を縮める（下限 40）
+    function textLayout(chars,{halfWidth,baseY=385,stagger=.32}){
+      const n=chars.length;if(!n)return {rows:0,shells:[]};
+      let R=n===1?110:n===2?95:n===3?85:75;
+      const widthOf=k=>2.15*R*(k-1)+2*R;
+      const rows=(widthOf(n)>2*halfWidth&&n>=4)?2:1;
+      const perRow=rows===2?Math.ceil(n/2):n;
+      if(widthOf(perRow)>2*halfWidth)R=Math.max(40,R*(2*halfWidth)/widthOf(perRow));
+      const spacing=2.15*R,shells=[];
+      for(let i=0;i<n;i++){
+        const row=i<perRow?0:1,count=row===0?perRow:n-perRow,j=row===0?i:i-perRow;
+        shells.push({char:chars[i],x:(j-(count-1)/2)*spacing,y:rows===2?(row===0?baseY+55:baseY-55):baseY,delay:i*stagger,R,power:clamp(R/115,.6,1.05)});
+      }
+      return {rows,shells};
+    }
+    // キャンバス座標の点列 [x0,y0,...]（y 下向き）を、bbox 中心を原点・長辺 [-1,1]・y 上向きに正規化
+    function normalizePoints(points){
+      if(points.length<2)return new Float32Array(0);
+      let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+      for(let i=0;i<points.length;i+=2){const x=points[i],y=points[i+1];if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}
+      const cx=(minX+maxX)/2,cy=(minY+maxY)/2,scale=2/Math.max(maxX-minX,maxY-minY,1e-6),out=new Float32Array(points.length);
+      for(let i=0;i<points.length;i+=2){out[i]=(points[i]-cx)*scale;out[i+1]=-(points[i+1]-cy)*scale;}
+      return out;
+    }
+    function pickStep(count,step){
+      if(count>320)return Math.min(6,step+1);
+      if(count<40)return Math.max(2,step-1);
+      return step;
+    }
+    return Object.freeze({sizeOf,distFactor,burstProfile,smallProfile,liftProfile,whistleProfile,whistleArbiter,sanitizeText,textLayout,normalizePoints,pickStep});
+  })();
+  // PURE_LOGIC_END
+  const {sizeOf,distFactor,burstProfile,smallProfile,liftProfile,whistleProfile,whistleArbiter,sanitizeText,textLayout,normalizePoints,pickStep}=PURE;
   let surface=$('fireworks'),W=innerWidth,H=innerHeight,simTime=0,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
   let raf=0,lastStamp=0,accumulator=0,density=2,quiet=false,soundOn=false,toastTimer;
   const camera={yaw:0,targetYaw:0,pitch:0,targetPitch:0,zoom:1,targetZoom:1,eye:[0,0,0],right:[1,0,0],up:[0,1,0],forward:[0,0,-1],lens:2.19,distance:900,horizon:.15};
