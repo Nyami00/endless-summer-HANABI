@@ -29,6 +29,4 @@
 
 ## GitHub Pages で公開する
 
-1. GitHub にリポジトリを作成し、`main` ブランチを push する
-2. リポジトリの Settings → Pages で Source を「Deploy from a branch」、Branch を `main` / `/(root)` にする
-3. 数分後に `https://<ユーザー名>.github.io/<リポジトリ名>/` で開けます
+https://Nyami00.github.io/endless-summer-HANABI
